@@ -9,6 +9,7 @@ from debug_log import log
 
 from secrets import WIFI_SSID, WIFI_PASSWORD
 
+VERSION = 1.0
 
 class Application:
     def __init__(self):
@@ -42,9 +43,17 @@ class Application:
         self.tile2 = self.tileview.add_tile(1, 0, lv.DIR.LEFT)
 
         self.tile1_label = lv.label(self.tile1)
-        self.tile1_label.set_text("Hello Students")
+        self.tile1_label2 = lv.label(self.tile1)
+        self.tile1_label3 = lv.label(self.tile1)
+        self.tile1_label.set_text(f"L.I.G.M.A.B")
+        self.tile1_label2.set_text(f"Group 15\nLudvig En, Isac Aubert, Gösta Palmqvist,\nMelker Ruben Saar, Bastian Gralén")
+        self.tile1_label3.set_text(f"Version:{VERSION}")
         self.tile1_label.set_style_text_font(lv.font_montserrat_28, 0)
-        self.tile1_label.center()
+        self.tile1_label2.set_style_text_font(lv.font_montserrat_16, 0)
+        self.tile1_label3.set_style_text_font(lv.font_montserrat_16, 0)
+        self.tile1_label.align(lv.ALIGN.CENTER, 0, -100)
+        self.tile1_label2.center()
+        self.tile1_label3.align(lv.ALIGN.CENTER, 0, 100)
         self.apply_tile_colors(self.tile1, self.tile1_label, False)
 
         self.tile2_label = lv.label(self.tile2)
