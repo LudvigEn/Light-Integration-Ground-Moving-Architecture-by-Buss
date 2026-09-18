@@ -9,7 +9,7 @@ from debug_log import log
 
 from secrets import WIFI_SSID, WIFI_PASSWORD
 
-VERSION = 1.0
+VERSION = 0.1
 
 class Application:
     def __init__(self):
