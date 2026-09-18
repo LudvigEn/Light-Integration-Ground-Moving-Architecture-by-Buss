@@ -78,3 +78,5 @@ except Exception as error:
     log("FATAL: %r" % (error,))
     sys.print_exception(error)
     raise
+
+nu kör vi
