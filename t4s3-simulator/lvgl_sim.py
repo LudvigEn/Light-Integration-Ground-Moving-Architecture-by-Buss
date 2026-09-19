@@ -2,8 +2,10 @@
 from types import SimpleNamespace
 
 OPA = SimpleNamespace(COVER=255, TRANSP=0)
-DIR = SimpleNamespace(LEFT=1, RIGHT=2, TOP=4, BOTTOM=8, ALL=15)
+DIR = SimpleNamespace(NONE=0, LEFT=1, RIGHT=2, TOP=4, BOTTOM=8, HOR=3, VER=12, ALL=15)
 EVENT = SimpleNamespace(CLICKED=1, VALUE_CHANGED=2, ALL=0)
+STATE = SimpleNamespace(DEFAULT=0, CHECKED=1, DISABLED=2)
+ANIM = SimpleNamespace(OFF=0, ON=1)
 SCROLLBAR_MODE = SimpleNamespace(OFF=0)
 ALIGN = SimpleNamespace(CENTER=0, TOP_LEFT=1, TOP_MID=2, BOTTOM_MID=3)
 font_montserrat_28 = 28
@@ -41,6 +43,10 @@ class obj:
         self.bg, self.fg, self.font = None, '#000000', 16
         self.centered = False
         self.hidden = False
+        self.flags = self.FLAG.SCROLLABLE
+        self.state = STATE.DEFAULT
+        self.scroll_y = 0
+        self.scroll_dir = DIR.ALL
         self.events = []
         self.text = None
 
@@ -84,22 +90,70 @@ class obj:
             raise NotImplementedError('Only hidden scrollbars are supported')
 
     def add_flag(self, flag):
+        self.flags |= flag
         if flag & self.FLAG.HIDDEN:
             self.hidden = True
 
     def remove_flag(self, flag):
+        self.flags &= ~flag
         if flag & self.FLAG.HIDDEN:
             self.hidden = False
+
+    def has_flag(self, flag):
+        return bool(self.flags & flag)
+
+    def add_state(self, state):
+        self.state |= state
+
+    def remove_state(self, state):
+        self.state &= ~state
+
+    def has_state(self, state):
+        return bool(self.state & state)
+
+    def set_scroll_dir(self, direction):
+        self.scroll_dir = direction
+
+    def get_scroll_y(self):
+        return self.scroll_y
+
+    def scroll_limit_y(self):
+        """Tiles scroll to the bottom of their direct children."""
+        if not hasattr(self, 'coord'):
+            return 0
+        bottom = self.height
+        for child in self.children:
+            if child.hidden:
+                continue
+            y = child.y
+            if child.centered:
+                y += (self.height - child.height) / 2
+            bottom = max(bottom, y + child.height)
+        return max(0, bottom - self.height)
+
+    def scroll_to_y(self, y, anim=ANIM.OFF):
+        # Animation is intentionally immediate in this simulator.
+        self.scroll_y = max(0, min(y, self.scroll_limit_y()))
+
+    def can_scroll_y(self, delta):
+        direction = DIR.BOTTOM if delta > 0 else DIR.TOP
+        return (self.has_flag(self.FLAG.SCROLLABLE)
+                and bool(self.scroll_dir & direction)
+                and self.scroll_limit_y() > 0)
 
     def add_event_cb(self, callback, event, data):
         self.events.append((callback, event, data))
 
-    def click(self):
+    def send_event(self, code):
         for callback, event, data in self.events:
-            if event in (EVENT.ALL, EVENT.CLICKED):
+            if event in (EVENT.ALL, code):
                 callback(SimpleNamespace(get_target=lambda: self,
-                                         get_code=lambda: EVENT.CLICKED,
+                                         get_code=lambda: code,
                                          get_user_data=lambda d=data: d))
+
+    def click(self):
+        if not self.has_state(STATE.DISABLED):
+            self.send_event(EVENT.CLICKED)
 
     def delete(self):
         if self.parent:
@@ -125,6 +179,23 @@ class button(obj):
 
 
 btn = button
+
+
+class switch(obj):
+    """Boolean control with LVGL's checked-state and change-event interface."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.set_size(50, 28)
+        self.add_flag(self.FLAG.CLICKABLE)
+        self.remove_flag(self.FLAG.SCROLLABLE)
+
+    def click(self):
+        if self.has_state(STATE.DISABLED):
+            return
+        self.state ^= STATE.CHECKED
+        self.send_event(EVENT.VALUE_CHANGED)
+        self.send_event(EVENT.CLICKED)
 
 
 class tileview(obj):
@@ -174,18 +245,40 @@ def render():
             if node.text is None:
                 x -= node.width / 2
                 y -= node.height / 2
+        # The canvas clips drawing at its edges. Clip hit targets as well,
+        # so off-screen children cannot receive clicks after scrolling.
+        bounds = (max(0, x), max(0, y),
+                  min(_screen.width, x + node.width),
+                  min(_screen.height, y + node.height))
         if node.bg:
             _canvas.create_rectangle(x, y, x + node.width, y + node.height,
                                      fill=node.bg, outline='')
+        if isinstance(node, switch):
+            disabled = node.has_state(STATE.DISABLED)
+            track = ('#aaaaaa' if disabled else
+                     '#2196f3' if node.has_state(STATE.CHECKED) else '#666666')
+            radius = min(node.width, node.height) / 2
+            _canvas.create_rectangle(x + radius, y, x + node.width - radius,
+                                     y + node.height, fill=track, outline='')
+            for left in (x, x + node.width - 2 * radius):
+                _canvas.create_oval(left, y, left + 2 * radius,
+                                    y + node.height, fill=track, outline='')
+            diameter = max(0, min(node.width, node.height) - 6)
+            knob_x = x + (node.width - diameter - 3
+                          if node.has_state(STATE.CHECKED) else 3)
+            _canvas.create_oval(knob_x, y + 3, knob_x + diameter,
+                                y + 3 + diameter,
+                                fill='#dddddd' if disabled else '#ffffff', outline='')
         if node.text is not None:
             _canvas.create_text(x, y, text=node.text, fill=node.fg,
                                 font=('Arial', -node.font), anchor='center' if node.centered else 'nw')
-        else:
-            hits.append((x, y, x + node.width, y + node.height, node))
+        elif bounds[0] < bounds[2] and bounds[1] < bounds[3]:
+            hits.append((*bounds, node))
+        node.scroll_to_y(node.scroll_y)
         for child in node.children:
             if isinstance(node, tileview) and child.coord != node.active:
                 continue
-            draw(child, x, y)
+            draw(child, x, y - node.scroll_y)
     draw(_screen)
     return hits
 

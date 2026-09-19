@@ -18,6 +18,8 @@ from types import ModuleType
 from fat_image import FatImage
 import lvgl_sim as lv
 
+DEFAULT_IMAGE = Path(__file__).resolve().parent.parent / 'device-build' / 't4s3-vfs-deploy.img'
+
 
 class Network(ModuleType):
     STA_IF = 0
@@ -119,7 +121,8 @@ def runtime(root, network):
 
 class Simulator:
     def __init__(self, source=None, offline=False, hidden=False):
-        self.source = Path(source).resolve() if source else None
+        self.source = (Path(source).resolve() if source else
+                       DEFAULT_IMAGE if DEFAULT_IMAGE.is_file() else None)
         self.window = tk.Tk()
         self.window.title('LilyGO T4-S3 • Python application simulator')
         self.window.resizable(False, False)
@@ -132,6 +135,9 @@ class Simulator:
         self.scope = {}
         self.hits = []
         self.press = (0, 0)
+        self.drag_mode = None
+        self.drag_tile = None
+        self.drag_scroll_y = 0
         toolbar = ttk.Frame(self.window, padding=8)
         toolbar.pack(fill='x')
         ttk.Button(toolbar, text='Open image…', command=self.choose).pack(side='left')
@@ -142,13 +148,17 @@ class Simulator:
         self.canvas = tk.Canvas(self.window, width=600, height=450, highlightthickness=0, bg='black')
         self.canvas.pack(padx=16, pady=8)
         lv.setup(self.canvas)
-        ttk.Label(self.window, text='Drag to swipe • Click to touch • Arrow keys change tiles').pack()
+        ttk.Label(self.window, text='Swipe sideways for tiles • Drag vertically or wheel to scroll • Click to touch').pack()
         self.status = tk.StringVar(value='Open a FAT filesystem .img to run its main.py')
         ttk.Label(self.window, textvariable=self.status, wraplength=600).pack(padx=12, pady=6)
         self.console = tk.Text(self.window, height=9, width=82, bg='#17212b', fg='#e5eef6', state='disabled')
         self.console.pack(padx=12, pady=(0, 12))
         self.canvas.bind('<ButtonPress-1>', self.down)
         self.canvas.bind('<ButtonRelease-1>', self.up)
+        self.canvas.bind('<B1-Motion>', self.drag)
+        self.canvas.bind('<MouseWheel>', self.wheel)
+        self.canvas.bind('<Button-4>', lambda event: self.wheel(event, -60))
+        self.canvas.bind('<Button-5>', lambda event: self.wheel(event, 60))
         for key, delta in [('Left', (-1, 0)), ('Right', (1, 0)), ('Up', (0, -1)), ('Down', (0, 1))]:
             self.window.bind('<' + key + '>', lambda event, d=delta: self.move(*d))
         self.window.protocol('WM_DELETE_WINDOW', self.close)
@@ -163,7 +173,11 @@ class Simulator:
         pass
 
     def choose(self):
-        filename = filedialog.askopenfilename(filetypes=[('Filesystem image', '*.img'), ('All files', '*.*')])
+        filename = filedialog.askopenfilename(
+            initialdir=str(DEFAULT_IMAGE.parent),
+            initialfile=DEFAULT_IMAGE.name,
+            filetypes=[('Filesystem image', '*.img'), ('All files', '*.*')],
+        )
         if filename:
             self.restart(filename)
 
@@ -216,19 +230,56 @@ class Simulator:
     def down(self, event):
         self.canvas.focus_set()
         self.press = (event.x, event.y)
+        self.drag_mode = None
+        self.drag_tile = self.tile_at(event.x, event.y)
+        self.drag_scroll_y = self.drag_tile.get_scroll_y() if self.drag_tile else 0
+
+    def tile_at(self, x, y):
+        for x1, y1, x2, y2, node in reversed(self.hits):
+            if hasattr(node, 'coord') and x1 <= x < x2 and y1 <= y < y2:
+                return node
+        return None
+
+    def drag(self, event):
+        dx, dy = event.x - self.press[0], event.y - self.press[1]
+        if self.drag_mode is None and max(abs(dx), abs(dy)) >= 8:
+            if abs(dy) > abs(dx) and self.drag_tile and self.drag_tile.can_scroll_y(-dy):
+                self.drag_mode = 'scroll'
+            else:
+                self.drag_mode = 'swipe'
+        if self.drag_mode == 'scroll':
+            self.invoke(lambda: self.drag_tile.scroll_to_y(self.drag_scroll_y - dy))
+
+    def wheel(self, event, delta=None):
+        if delta is None:
+            raw = getattr(event, 'delta', 0)
+            if not raw:
+                return
+            delta = -raw / 120 * 60 if abs(raw) >= 120 else -raw * 3
+        tile = self.tile_at(event.x, event.y)
+        if tile and tile.can_scroll_y(delta):
+            self.invoke(lambda: tile.scroll_to_y(tile.get_scroll_y() + delta))
+        return 'break'
 
     def up(self, event):
+        self.drag(event)
         dx, dy = event.x - self.press[0], event.y - self.press[1]
+        if self.drag_mode == 'scroll':
+            self.drag_mode = None
+            return
         if max(abs(dx), abs(dy)) >= 50:
             if abs(dx) >= abs(dy):
                 self.move(-1 if dx > 0 else 1, 0)
             else:
                 self.move(0, -1 if dy > 0 else 1)
-        else:
+        elif self.drag_mode is None:
             for x1, y1, x2, y2, node in reversed(self.hits):
-                if x1 <= event.x <= x2 and y1 <= event.y <= y2 and node.events:
+                if (x1 <= event.x < x2 and y1 <= event.y < y2
+                        and x1 <= self.press[0] < x2 and y1 <= self.press[1] < y2
+                        and (node.events or node.has_flag(lv.obj.FLAG.CLICKABLE))):
                     self.invoke(node.click)
                     break
+        self.drag_mode = None
 
     def close(self):
         if self.context:
