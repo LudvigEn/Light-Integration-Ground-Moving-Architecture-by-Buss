@@ -1,0 +1,150 @@
+{
+    "stops": [
+        {
+            "id": "24505",
+            "name": "Campus Gräsvik",
+            "lat": 56.180634,
+            "lon": 15.592908
+        }
+    ],
+    "departures": [
+        {
+            "scheduled": "2026-09-18T19:37:40",
+            "realtime": "2026-09-18T19:41:36",
+            "delay": 236,
+            "canceled": false,
+            "route": {
+                "designation": "1",
+                "direction": "Lyckeby",
+                "origin": {
+                    "name": "Saltö"
+                },
+                "destination": {
+                    "name": "Lyckeby Slottsbacken"
+                },
+                "stops": null
+            },
+            "stop": {
+                "id": "24505",
+                "name": "Campus Gräsvik",
+                "lat": 56.180634,
+                "lon": 15.592908
+            }
+        },
+        {
+            "scheduled": "2026-09-18T19:40:06",
+            "realtime": "2026-09-18T19:41:17",
+            "delay": 71,
+            "canceled": false,
+            "route": {
+                "designation": "1",
+                "direction": "Saltö",
+                "origin": {
+                    "name": "Lyckeby Slottsbacken"
+                },
+                "destination": {
+                    "name": "Saltö"
+                },
+                "stops": null
+            },
+            "stop": {
+                "id": "24505",
+                "name": "Campus Gräsvik",
+                "lat": 56.180634,
+                "lon": 15.592908
+            }
+        },
+        {
+            "scheduled": "2026-09-18T19:57:40",
+            "realtime": "2026-09-18T19:58:55",
+            "delay": 75,
+            "canceled": false,
+            "route": {
+                "designation": "1",
+                "direction": "Lyckeby",
+                "origin": {
+                    "name": "Saltö"
+                },
+                "destination": {
+                    "name": "Lyckeby Slottsbacken"
+                },
+                "stops": null
+            },
+            "stop": {
+                "id": "24505",
+                "name": "Campus Gräsvik",
+                "lat": 56.180634,
+                "lon": 15.592908
+            }
+        },
+        {
+            "scheduled": "2026-09-18T20:00:06",
+            "realtime": "2026-09-18T20:00:22",
+            "delay": 16,
+            "canceled": false,
+            "route": {
+                "designation": "1",
+                "direction": "Saltö",
+                "origin": {
+                    "name": "Lyckeby Slottsbacken"
+                },
+                "destination": {
+                    "name": "Saltö"
+                },
+                "stops": null
+            },
+            "stop": {
+                "id": "24505",
+                "name": "Campus Gräsvik",
+                "lat": 56.180634,
+                "lon": 15.592908
+            }
+        },
+        {
+            "scheduled": "2026-09-18T20:17:40",
+            "realtime": "2026-09-18T20:18:55",
+            "delay": 75,
+            "canceled": false,
+            "route": {
+                "designation": "1",
+                "direction": "Lyckeby",
+                "origin": {
+                    "name": "Saltö"
+                },
+                "destination": {
+                    "name": "Lyckeby Slottsbacken"
+                },
+                "stops": null
+            },
+            "stop": {
+                "id": "24505",
+                "name": "Campus Gräsvik",
+                "lat": 56.180634,
+                "lon": 15.592908
+            }
+        },
+        {
+            "scheduled": "2026-09-18T20:20:06",
+            "realtime": "2026-09-18T20:20:22",
+            "delay": 16,
+            "canceled": false,
+            "route": {
+                "designation": "1",
+                "direction": "Saltö",
+                "origin": {
+                    "name": "Lyckeby Slottsbacken"
+                },
+                "destination": {
+                    "name": "Saltö"
+                },
+                "stops": null
+            },
+            "stop": {
+                "id": "24505",
+                "name": "Campus Gräsvik",
+                "lat": 56.180634,
+                "lon": 15.592908
+            }
+        }
+    ]
+}
