@@ -13,7 +13,7 @@ class Route:
         self.direction: str = None
         self.origin: str = None
         self.destination: str = None
-        self.stops: list = None
+        self.stops: list[Stop] = None
 
 class Departure:
     """Data on Departure (Avgång) -granularity
@@ -43,19 +43,22 @@ def read_data(test=False):
             payload = json.load(file)
         return parse_data(payload)
     else:
-        REQUESTED_STOP = "740032188" # Campus Gräsvik
-        response = requests.get(f"https://realtime-api.trafiklab.se/v1/departures/{REQUESTED_STOP}?key={API_KEY}", timeout=10)
-        try:
-            if response.status_code != 200:
-                print(f"api request failed({response.status_code})")
-                raise RuntimeError(
-                    f"API request failed:{response.status_code}"
-                )
-            payload = response.json()
-            print("API-data fetched successfully")
-            return parse_data(payload)
-        finally:
-            response.close()
+        REQUESTED_STOPS = [
+            "740032188", # Campus Gräsvik
+            "740000230" # Karlskrona Centralstation
+        ]
+        stops = []
+        for i in REQUESTED_STOPS:
+            response = requests.get(f"https://realtime-api.trafiklab.se/v1/departures/{i}?key={API_KEY}", timeout=10)
+            try:
+                if response.status_code != 200:
+                    raise RuntimeError(
+                        f"API request failed:{response.status_code}"
+                    )
+                stops.extend(parse_data(response.json()))
+            finally:
+                response.close()
+    return stops
 
 
 def parse_data(payload):
