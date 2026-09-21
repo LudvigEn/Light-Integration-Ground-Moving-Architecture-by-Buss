@@ -85,6 +85,18 @@ class obj:
     def set_style_text_font(self, font, selector):
         self.font = font
 
+    def set_style_pad_all(self, padding, selector):
+        # The renderer already uses zero padding and no theme borders.
+        if padding != 0 or selector != 0:
+            raise NotImplementedError('Only zero padding on the default selector is supported')
+
+    def set_style_border_width(self, width, selector):
+        if width != 0 or selector != 0:
+            raise NotImplementedError('Only zero border width on the default selector is supported')
+
+    def get_parent(self):
+        return self.parent
+
     def set_scrollbar_mode(self, mode):
         if mode != SCROLLBAR_MODE.OFF:
             raise NotImplementedError('Only hidden scrollbars are supported')
@@ -213,6 +225,11 @@ class tileview(obj):
         if (col, row) not in [t.coord for t in self.children]:
             raise ValueError('No tile at this position')
         self.active = (col, row)
+
+    def set_tile(self, tile, anim=ANIM.OFF):
+        if tile not in self.children:
+            raise ValueError('Tile does not belong to this tileview')
+        self.set_tile_by_index(*tile.coord, anim)
 
     def move(self, dx, dy):
         direction = DIR.RIGHT if dx > 0 else DIR.LEFT if dx < 0 else DIR.BOTTOM if dy > 0 else DIR.TOP

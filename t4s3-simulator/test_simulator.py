@@ -1,5 +1,6 @@
 """Integration checks: real image extraction, boot, touch callbacks, reset state."""
 import argparse
+import ast
 import hashlib
 from pathlib import Path
 import tempfile
@@ -35,6 +36,34 @@ class WidgetTests(unittest.TestCase):
         row.set_size(450, 60)
         self.app.refresh()
         return row
+
+    def test_stop_click_opens_and_replaces_departures(self):
+        # Load the actual Application class without hardware or secrets imports.
+        source = Path(__file__).resolve().parents[1] / 'project' / 'main.py'
+        tree = ast.parse(source.read_text(encoding='utf-8'))
+        application = next(node for node in tree.body
+                           if isinstance(node, ast.ClassDef) and node.name == 'Application')
+        namespace = {'lv': lv, 'log': lambda message: None}
+        exec(compile(ast.Module(body=[application], type_ignores=[]), str(source), 'exec'), namespace)
+        app = namespace['Application'].__new__(namespace['Application'])
+        app.tileview = lv.tileview(lv.screen_active())
+        app.tileview.set_size(600, 450)
+        app.backgrounds, app.borders, app.labels = [], [], []
+        app.dark_mode = True
+        route = SimpleNamespace(designation='1', direction='Lyckeby')
+        departure = SimpleNamespace(route=route, realtime=None,
+                                    scheduled='2026-09-18T16:44:40')
+        stops = [SimpleNamespace(name=name, departures=[departure])
+                 for name in ('Campus Gräsvik', 'Another stop')]
+        app.create_stops_screen(route, stops)
+        boxes = [row.children[0] for row in app.route_scr.children if row.children]
+        for box, stop in zip(boxes + boxes, stops + stops):
+            box.click()
+            self.assertEqual(app.tileview.active, (2, 0))
+            self.assertEqual(app.dep_scr.children[0].get_text(), stop.name)
+            self.assertEqual(len(app.tileview.children), 2)
+            self.assertEqual(len(app.labels), 7)
+            app.tileview.set_tile(app.route_scr)
 
     def test_switch_checked_events_and_disabled(self):
         control = lv.switch(self.tile)
