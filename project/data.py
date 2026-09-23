@@ -38,7 +38,7 @@ class Stop:
 def read_data(test=False):
     """Function to connect to, and fetch API-data"""
 
-    if test == True:
+    if test == True: # This is just for test-cases (so we don't make an absurd amount of API-calls)
         with open("test_data/stop_740032188_formatted.json", "r", encoding="utf-8") as file:
             payload = json.load(file)
         return parse_data(payload)
@@ -59,7 +59,6 @@ def read_data(test=False):
             finally:
                 response.close()
     return stops
-
 
 def parse_data(payload):
     """Takes indata from API-call,

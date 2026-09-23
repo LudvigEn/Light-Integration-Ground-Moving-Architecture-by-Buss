@@ -48,7 +48,7 @@ class Application:
         self.tileview.set_tile(self.dep_scr, lv.ANIM.OFF) ## Focus on a Departure tile
 
     def open_stops(self, route):
-        """Show the laded stops served by the selected route."""
+        """Show the Stops on the selected route."""
         self.tileview.set_tile(self.routes_screen, lv.ANIM.OFF) ## Focus on Routes-screen
 
         self.remove_screen("dep_scr") ## Remove "old" Departure-screen
@@ -64,19 +64,22 @@ class Application:
         self.apply_colors() ## Apply colors to Backgrounds, Borders and Labels
 
     def remove_screen(self, attribute):
-        """Delete a screen no longer focused"""
-        if not hasattr(self, attribute):
+        """Delete a screen no longer focused.
+        We do this by checking a component and backtracking until we get the parent-of-the-parent (and so on)
+        What we end up on is the screen that holds those components.
+        """
+        if not hasattr(self, attribute): # If the screen doesn't exist, no need to remove it.
             return
-        screen = getattr(self, attribute)
+        screen = getattr(self, attribute) # Fetch screen name
 
-        def belongs_to_screen(widget):
-            while widget is not None:
-                if widget == screen:
+        def belongs_to_screen(widget): # Determine if a border/background/label is part of a screen.
+            while widget is not None: # While there are still components to itterate over.
+                if widget == screen: # When.
                     return True
-                widget = widget.get_parent()
+                widget = widget.get_parent() # Check that widgets parent component and repeat
             return False
 
-        for widgets in (self.backgrounds, self.borders, self.labels):
+        for widgets in (self.backgrounds, self.borders, self.labels): # For all components
             widgets[:] = [
                 widget for widget in widgets
                 if not belongs_to_screen(widget)
@@ -195,7 +198,7 @@ class Application:
 
         border_width = 2 # Thickness of box edges
 
-        routes = {}
+        routes = {} #
 
         for stop in stops:
             for departure in stop.departures:
