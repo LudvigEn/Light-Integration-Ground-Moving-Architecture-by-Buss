@@ -15,6 +15,23 @@ small to contain all allocated files, open the full `t4s3-vfs.img` instead.
 
 ## Controls
 
+- Dropdowns support `lv.dropdown(parent)`, newline-separated `set_options`,
+  `set_selected`, `get_selected`, `get_options`, and `get_option_count`.
+  Click to open and pick an option; a changed selection emits
+  `lv.EVENT.VALUE_CHANGED`. Click outside to dismiss. Programmatic selection
+  does not emit an event. Popup lists currently do not scroll, so keep options
+  short enough to fit the display.
+- Dropdown popups follow the control's background and text colors by default.
+  Use `dropdown.get_list()` with `set_style_bg_color` or `set_style_text_color`
+  to override the popup colors: `lv.PART.MAIN` styles ordinary rows and
+  `lv.PART.SELECTED` (optionally combined with `lv.STATE.CHECKED`) styles the
+  selected row. The default selected row uses white text on blue.
+  Button labels inherit their parent's text color unless explicitly styled.
+- Widgets support `set_style_border_width(pixels, 0)` and
+  `set_style_border_color(color, 0)` for rectangular borders inside their bounds.
+  A width of zero removes the border.
+- Cursor x/y coordinates appear below the display, measured in pixels from its
+  top-left corner (0, 0), and update while moving or dragging within the window.
 - Click a switch to toggle it. Switches support `lv.STATE.CHECKED`,
   `lv.STATE.DISABLED`, `add_state`, `remove_state`, and `has_state`.
 - User toggles emit `lv.EVENT.VALUE_CHANGED`, followed by `lv.EVENT.CLICKED`.
@@ -25,6 +42,9 @@ small to contain all allocated files, open the full `t4s3-vfs.img` instead.
 - Swipe horizontally or use the arrow keys to change tiles. Vertical swipes
   navigate between vertical tiles when the current tile has no vertical
   overflow. Arrow keys always navigate tiles.
+- Tile changes emit `lv.EVENT.VALUE_CHANGED`; `tileview.get_tile_active()`
+  identifies the destination. `container.clean()` removes its children so
+  an application can rebuild a tile's contents each time it is entered.
 
 Tile scrolling works automatically when its direct children extend below its
 height. A hidden scrollbar does not disable scrolling. To disable user scrolling,

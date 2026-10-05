@@ -37,6 +37,138 @@ class WidgetTests(unittest.TestCase):
         self.app.refresh()
         return row
 
+    def test_swipe_refreshes_departure_tile_without_accumulating_rows(self):
+        calls = []
+
+        def refresh_departures(event):
+            self.assertIs(event.get_target(), self.view)
+            if self.view.get_tile_active() == self.other_tile:
+                self.other_tile.clean()
+                row = lv.obj(self.other_tile)
+                lv.label(row).set_text('Updated departures')
+                calls.append(row)
+
+        self.view.add_event_cb(refresh_departures, lv.EVENT.VALUE_CHANGED, None)
+        for _ in range(2):
+            self.view.set_tile(self.tile)
+            self.app.down(SimpleNamespace(x=500, y=200))
+            self.app.up(SimpleNamespace(x=100, y=200))
+            self.assertIs(self.view.get_tile_active(), self.other_tile)
+            self.assertEqual(len(self.other_tile.children), 1)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0].children, [])
+        self.view.move(1, 0)  # No tile exists further to the right.
+        self.view.set_tile(self.other_tile)  # Already active.
+        self.assertEqual(len(calls), 2)
+
+    def test_dropdown_selection_through_touch(self):
+        control = lv.dropdown(self.tile)
+        control.set_pos(20, 60)
+        control.set_options('First\nSecond\nThird')
+        changes = []
+        control.add_event_cb(lambda event: changes.append(event.get_target().get_selected()),
+                             lv.EVENT.VALUE_CHANGED, None)
+        control.set_selected(2)
+        self.assertEqual(changes, [])
+        self.assertEqual(control.get_options(), 'First\nSecond\nThird')
+        self.assertEqual(control.get_option_count(), 3)
+        self.app.refresh()
+        touch = SimpleNamespace(x=30, y=70)
+        self.app.down(touch)
+        self.app.up(touch)
+        self.assertTrue(control.is_open())
+        choice = SimpleNamespace(x=30, y=140)
+        self.app.down(choice)
+        self.app.up(choice)
+        self.assertEqual(control.get_selected(), 1)
+        self.assertEqual(changes, [1])
+        self.assertFalse(control.is_open())
+
+    def test_dropdown_dismiss_and_disabled(self):
+        control = lv.dropdown(self.tile)
+        control.open()
+        self.app.refresh()
+        outside = SimpleNamespace(x=500, y=400)
+        self.app.down(outside)
+        self.app.up(outside)
+        self.assertFalse(control.is_open())
+        control.add_state(lv.STATE.DISABLED)
+        control.click()
+        self.assertFalse(control.is_open())
+        control.set_options('')
+        control.remove_state(lv.STATE.DISABLED)
+        control.click()
+        self.assertFalse(control.is_open())
+
+    def test_dropdown_popup_tracks_theme_while_open(self):
+        control = lv.dropdown(self.tile)
+        control.set_options('First\nSecond')
+        control.open()
+        for background, foreground in [('#303030', '#ffffff'), ('#e0e0e0', '#000000')]:
+            with self.subTest(background=background):
+                control.set_style_bg_color(background, lv.PART.MAIN)
+                control.set_style_text_color(foreground, lv.PART.MAIN)
+                self.canvas.reset_mock()
+                self.app.refresh()
+                rows = self.canvas.create_rectangle.call_args_list[-2:]
+                texts = self.canvas.create_text.call_args_list[-2:]
+                self.assertEqual([row.kwargs['fill'] for row in rows], ['#476582', background])
+                self.assertEqual([text.kwargs['fill'] for text in texts], ['#ffffff', foreground])
+
+    def test_dropdown_list_styles_are_separate_from_control(self):
+        control = lv.dropdown(self.tile)
+        control.set_options('First\nSecond')
+        control.set_style_bg_color('#303030', 0)
+        popup = control.get_list()
+        popup.set_style_bg_color('#222222', lv.PART.MAIN)
+        popup.set_style_text_color('#eeeeee', lv.PART.MAIN)
+        popup.set_style_bg_color('#123456', lv.PART.SELECTED)
+        popup.set_style_text_color('#abcdef', lv.PART.SELECTED | lv.STATE.CHECKED)
+        control.open()
+        self.canvas.reset_mock()
+        self.app.refresh()
+        rows = self.canvas.create_rectangle.call_args_list[-2:]
+        texts = self.canvas.create_text.call_args_list[-2:]
+        self.assertEqual([row.kwargs['fill'] for row in rows], ['#123456', '#222222'])
+        self.assertEqual([text.kwargs['fill'] for text in texts], ['#abcdef', '#eeeeee'])
+        self.assertEqual(control.bg, '#303030')
+        self.assertEqual(control.fg, '#000000')
+        control.close()
+        control.open()
+        self.assertIs(control.get_list(), popup)
+
+    def test_button_border_changes_color_and_can_be_removed(self):
+        control = lv.button(self.tile)
+        control.set_pos(75, 260)
+        control.set_size(200, 50)
+        control.set_style_border_width(2, lv.PART.MAIN)
+        for color in ('#ffffff', '#000000'):
+            control.set_style_border_color(color, lv.PART.MAIN)
+            self.canvas.reset_mock()
+            self.app.refresh()
+            border = self.canvas.create_rectangle.call_args
+            self.assertEqual(border.args, (76, 261, 274, 309))
+            self.assertEqual(border.kwargs, {'fill': '', 'outline': color, 'width': 2})
+        control.set_style_border_width(0, lv.PART.MAIN)
+        self.canvas.reset_mock()
+        self.app.refresh()
+        self.assertFalse(any(call.kwargs.get('width')
+                             for call in self.canvas.create_rectangle.call_args_list))
+
+    def test_button_label_inherits_theme_with_explicit_override(self):
+        control = lv.button(self.tile)
+        caption = lv.label(control)
+        caption.set_text('SAVE')
+        caption.center()
+        for foreground in ('#ffffff', '#000000'):
+            control.set_style_text_color(foreground, lv.PART.MAIN)
+            self.app.refresh()
+            self.assertEqual(self.canvas.create_text.call_args.kwargs['fill'], foreground)
+        caption.set_style_text_color('#ff0000', 0)
+        control.set_style_text_color('#ffffff', 0)
+        self.app.refresh()
+        self.assertEqual(self.canvas.create_text.call_args.kwargs['fill'], '#ff0000')
+
     def test_stop_click_opens_and_replaces_departures(self):
         # Load the actual Application class without hardware or secrets imports.
         source = Path(__file__).resolve().parents[1] / 'project' / 'main.py'

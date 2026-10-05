@@ -5,6 +5,7 @@ OPA = SimpleNamespace(COVER=255, TRANSP=0)
 DIR = SimpleNamespace(NONE=0, LEFT=1, RIGHT=2, TOP=4, BOTTOM=8, HOR=3, VER=12, ALL=15)
 EVENT = SimpleNamespace(CLICKED=1, VALUE_CHANGED=2, ALL=0)
 STATE = SimpleNamespace(DEFAULT=0, CHECKED=1, DISABLED=2)
+PART = SimpleNamespace(MAIN=0, SELECTED=0x30000)
 ANIM = SimpleNamespace(OFF=0, ON=1)
 SCROLLBAR_MODE = SimpleNamespace(OFF=0)
 ALIGN = SimpleNamespace(CENTER=0, TOP_LEFT=1, TOP_MID=2, BOTTOM_MID=3)
@@ -40,7 +41,8 @@ class obj:
             parent.children.append(self)
         self.x = self.y = 0
         self.width, self.height = 100, 50
-        self.bg, self.fg, self.font = None, '#000000', 16
+        self.bg, self._fg, self.font = None, None, 16
+        self.border_width, self.border_color = 0, '#000000'
         self.centered = False
         self.hidden = False
         self.flags = self.FLAG.SCROLLABLE
@@ -49,6 +51,16 @@ class obj:
         self.scroll_dir = DIR.ALL
         self.events = []
         self.text = None
+
+    @property
+    def fg(self):
+        if self._fg is not None:
+            return self._fg
+        return self.parent.fg if self.parent else '#000000'
+
+    @fg.setter
+    def fg(self, color):
+        self._fg = color
 
     def set_size(self, width, height):
         self.width, self.height = width, height
@@ -91,8 +103,14 @@ class obj:
             raise NotImplementedError('Only zero padding on the default selector is supported')
 
     def set_style_border_width(self, width, selector):
-        if width != 0 or selector != 0:
-            raise NotImplementedError('Only zero border width on the default selector is supported')
+        if selector != PART.MAIN:
+            raise NotImplementedError('Only borders on the default selector are supported')
+        self.border_width = max(0, int(width))
+
+    def set_style_border_color(self, color, selector):
+        if selector != PART.MAIN:
+            raise NotImplementedError('Only borders on the default selector are supported')
+        self.border_color = color
 
     def get_parent(self):
         return self.parent
@@ -171,6 +189,12 @@ class obj:
         if self.parent:
             self.parent.children.remove(self)
 
+    def clean(self):
+        """Delete all children while keeping the container itself."""
+        for child in list(self.children):
+            child.clean()
+            child.delete()
+
 
 class label(obj):
     def __init__(self, parent):
@@ -191,6 +215,97 @@ class button(obj):
 
 
 btn = button
+
+
+class _DropdownList(obj):
+    """Popup styles kept outside the normal child drawing tree."""
+
+    def __init__(self, owner):
+        super().__init__()
+        self.parent = owner
+        self.selected_colors = {}
+
+    def _set_color(self, name, color, selector):
+        if selector == PART.MAIN:
+            setattr(self, name, color)
+        elif selector in (PART.SELECTED, PART.SELECTED | STATE.CHECKED):
+            self.selected_colors[(name, selector)] = color
+        else:
+            raise NotImplementedError('Dropdown list colors support MAIN and SELECTED (optionally CHECKED)')
+
+    def set_style_bg_color(self, color, selector):
+        self._set_color('bg', color, selector)
+
+    def set_style_text_color(self, color, selector):
+        self._set_color('fg', color, selector)
+
+    def selected_color(self, name, fallback):
+        return self.selected_colors.get(
+            (name, PART.SELECTED | STATE.CHECKED),
+            self.selected_colors.get((name, PART.SELECTED), fallback))
+
+
+class dropdown(obj):
+    """Single-choice dropdown with newline-separated options."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.set_size(160, 40)
+        self.add_flag(self.FLAG.CLICKABLE)
+        self.remove_flag(self.FLAG.SCROLLABLE)
+        self.options = ['Option 1', 'Option 2', 'Option 3']
+        self.selected = 0
+        self.opened = False
+        self.popup = _DropdownList(self)
+
+    def get_list(self):
+        return self.popup
+
+    def set_options(self, options):
+        self.options = str(options).split('\n') if options else []
+        self.selected = 0
+        self.close()
+
+    def get_options(self):
+        return '\n'.join(self.options)
+
+    def get_option_count(self):
+        return len(self.options)
+
+    def set_selected(self, index):
+        if self.options:
+            self.selected = max(0, min(int(index), len(self.options) - 1))
+
+    def get_selected(self):
+        return self.selected
+
+    def open(self):
+        if not self.has_state(STATE.DISABLED) and self.options:
+            self.opened = True
+
+    def close(self):
+        self.opened = False
+
+    def is_open(self):
+        return self.opened
+
+    def click(self):
+        if self.has_state(STATE.DISABLED):
+            return
+        if self.opened:
+            self.close()
+        else:
+            self.open()
+        self.send_event(EVENT.CLICKED)
+
+    def select(self, index):
+        if self.has_state(STATE.DISABLED):
+            return
+        previous = self.selected
+        self.set_selected(index)
+        self.close()
+        if self.selected != previous:
+            self.send_event(EVENT.VALUE_CHANGED)
 
 
 class switch(obj):
@@ -224,7 +339,12 @@ class tileview(obj):
     def set_tile_by_index(self, col, row, anim=False):
         if (col, row) not in [t.coord for t in self.children]:
             raise ValueError('No tile at this position')
-        self.active = (col, row)
+        if self.active != (col, row):
+            self.active = (col, row)
+            self.send_event(EVENT.VALUE_CHANGED)
+
+    def get_tile_active(self):
+        return next((tile for tile in self.children if tile.coord == self.active), None)
 
     def set_tile(self, tile, anim=ANIM.OFF):
         if tile not in self.children:
@@ -236,7 +356,7 @@ class tileview(obj):
         current = next(t for t in self.children if t.coord == self.active)
         target = (self.active[0] + dx, self.active[1] + dy)
         if current.directions & direction and target in [t.coord for t in self.children]:
-            self.active = target
+            self.set_tile_by_index(*target)
 
 
 def setup(canvas):
@@ -251,6 +371,7 @@ def setup(canvas):
 def render():
     _canvas.delete('all')
     hits = []
+    dropdowns = []
 
     def draw(node, px=0, py=0):
         if node.hidden:
@@ -270,6 +391,18 @@ def render():
         if node.bg:
             _canvas.create_rectangle(x, y, x + node.width, y + node.height,
                                      fill=node.bg, outline='')
+        if isinstance(node, dropdown):
+            _canvas.create_rectangle(x, y, x + node.width, y + node.height,
+                                     fill=node.bg or '#eeeeee', outline='#888888')
+            caption = node.options[node.selected] if node.options else ''
+            _canvas.create_text(x + 8, y + node.height / 2, text=caption,
+                                fill='#888888' if node.has_state(STATE.DISABLED) else node.fg,
+                                font=('Arial', -node.font), anchor='w',
+                                width=max(1, node.width - 32))
+            _canvas.create_text(x + node.width - 14, y + node.height / 2,
+                                text='▾', fill=node.fg, anchor='center')
+            if node.opened and not node.has_state(STATE.DISABLED) and bounds[0] < bounds[2] and bounds[1] < bounds[3]:
+                dropdowns.append((node, x, y))
         if isinstance(node, switch):
             disabled = node.has_state(STATE.DISABLED)
             track = ('#aaaaaa' if disabled else
@@ -296,7 +429,43 @@ def render():
             if isinstance(node, tileview) and child.coord != node.active:
                 continue
             draw(child, x, y - node.scroll_y)
+        if node.border_width:
+            width = min(node.border_width, node.width, node.height)
+            inset = width / 2
+            _canvas.create_rectangle(x + inset, y + inset,
+                                     x + node.width - inset, y + node.height - inset,
+                                     fill='', outline=node.border_color, width=width)
     draw(_screen)
+    # Draw the popup last so it receives clicks ahead of underlying widgets.
+    for node, x, y in dropdowns:
+        blocker = obj()
+        blocker.add_flag(obj.FLAG.CLICKABLE)
+        blocker.click = node.close
+        hits.append((0, 0, _screen.width, _screen.height, blocker))
+        row_height = max(28, node.font + 12)
+        popup_height = row_height * len(node.options)
+        left = max(0, min(x, _screen.width - node.width))
+        top = y + node.height
+        if top + popup_height > _screen.height:
+            top = max(0, y - popup_height)
+        popup = node.get_list()
+        background = popup.bg or node.bg or '#eeeeee'
+        for index, option in enumerate(node.options):
+            row_y = top + index * row_height
+            selected = index == node.selected
+            _canvas.create_rectangle(left, row_y, left + node.width, row_y + row_height,
+                                     fill=popup.selected_color('bg', '#476582') if selected else background,
+                                     outline='#888888')
+            _canvas.create_text(left + 8, row_y + row_height / 2, text=option,
+                                fill=popup.selected_color('fg', '#ffffff') if selected else popup.fg,
+                                font=('Arial', -node.font), anchor='w',
+                                width=max(1, node.width - 16))
+            choice = obj()
+            choice.add_flag(obj.FLAG.CLICKABLE)
+            choice.click = lambda n=node, i=index: n.select(i)
+            if row_y < _screen.height:
+                hits.append((left, row_y, min(_screen.width, left + node.width),
+                             min(_screen.height, row_y + row_height), choice))
     return hits
 
 
