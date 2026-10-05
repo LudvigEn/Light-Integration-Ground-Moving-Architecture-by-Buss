@@ -148,6 +148,9 @@ class Simulator:
         self.canvas = tk.Canvas(self.window, width=600, height=450, highlightthickness=0, bg='black')
         self.canvas.pack(padx=16, pady=8)
         lv.setup(self.canvas)
+        self.cursor_position = tk.StringVar(value='x: —    y: —')
+        ttk.Label(self.window, textvariable=self.cursor_position).pack()
+        self.window.bind('<Motion>', self.update_cursor_position, add='+')
         ttk.Label(self.window, text='Swipe sideways for tiles • Drag vertically or wheel to scroll • Click to touch').pack()
         self.status = tk.StringVar(value='Open a FAT filesystem .img to run its main.py')
         ttk.Label(self.window, textvariable=self.status, wraplength=600).pack(padx=12, pady=6)
@@ -162,6 +165,11 @@ class Simulator:
         for key, delta in [('Left', (-1, 0)), ('Right', (1, 0)), ('Up', (0, -1)), ('Down', (0, 1))]:
             self.window.bind('<' + key + '>', lambda event, d=delta: self.move(*d))
         self.window.protocol('WM_DELETE_WINDOW', self.close)
+
+    def update_cursor_position(self, event):
+        x = event.x_root - self.canvas.winfo_rootx()
+        y = event.y_root - self.canvas.winfo_rooty()
+        self.cursor_position.set(f'x: {x}    y: {y}')
 
     def write(self, text):
         self.console.configure(state='normal')

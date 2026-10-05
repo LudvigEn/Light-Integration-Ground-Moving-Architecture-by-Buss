@@ -1,9 +1,13 @@
 """Module to fetch, and return data"""
 from datetime import datetime
 import json
-import requests
 from secrets import API_KEY
-# from debug_log import log
+import requests
+try:
+    from debug_log import log
+except ImportError:
+    def log(message):
+        print(message)
 
 class Route:
     """Data on Route (Linje) -granularity
@@ -13,7 +17,7 @@ class Route:
         self.direction: str = None
         self.origin: str = None
         self.destination: str = None
-        self.stops: list = None
+        self.stops: list[Stop] = None
 
 class Departure:
     """Data on Departure (Avgång) -granularity
@@ -35,44 +39,35 @@ class Stop:
         self.lon = None
         self.departures: list[Departure] = None
 
-def read_data(test=False):
+def read_data(stop_id, test=False):
     """Function to connect to, and fetch API-data"""
 
-    if test == True:
+    if test: # This is just for test-cases (so we don't make an absurd amount of API-calls)
         with open("test_data/stop_740032188_formatted.json", "r", encoding="utf-8") as file:
             payload = json.load(file)
-        return parse_data(payload)
     else:
-        REQUESTED_STOP = "740032188" # Campus Gräsvik
-        response = requests.get(f"https://realtime-api.trafiklab.se/v1/departures/{REQUESTED_STOP}?key={API_KEY}", timeout=10)
+        response = requests.get(f"https://realtime-api.trafiklab.se/v1/departures/{stop_id}?key={API_KEY}", timeout=10)
         try:
             if response.status_code != 200:
-                print(f"api request failed({response.status_code})")
                 raise RuntimeError(
                     f"API request failed:{response.status_code}"
                 )
             payload = response.json()
-            print("API-data fetched successfully")
-            return parse_data(payload)
         finally:
             response.close()
-
+    return parse_data(payload)
 
 def parse_data(payload):
     """Takes indata from API-call,
     then divides them up into Route[Stop[Departures]]
     """
-    stops_by_id = {}
-    print(f"Payload_size:{len(payload)}")
-    for item in payload["stops"]:
-        stop = Stop()
-        stop.id = item["id"]
-        stop.name = item["name"]
-        stop.lat = item["lat"]
-        stop.lon = item["lon"]
-        stop.departures = []
-        stops_by_id[stop.id] = stop
-
+    returned_stops = payload["stops"]
+    if not returned_stops:
+        return None
+    stop = Stop()
+    stop.id = str(payload["query"]["query"])
+    stop.name = returned_stops[0]["name"]
+    stop.departures = []
     for item in payload["departures"]:
         route_data = item["route"]
 
@@ -89,13 +84,13 @@ def parse_data(payload):
         departure.canceled = item["canceled"]
         departure.route = route
 
-        stop_id = item["stop"]["id"]
-        stops_by_id[stop_id].departures.append(departure)
-    return list(stops_by_id.values())
+        stop.departures.append(departure)
+
+    return stop
 
 def main():
     """Main..."""
-    data = read_data()
+    data = read_data("740032188")
     print(json.dumps(data, default=vars, indent=4, ensure_ascii=False))
 
 if __name__ == "__main__":
