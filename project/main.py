@@ -11,18 +11,55 @@ from secrets import WIFI_SSID, WIFI_PASSWORD # Load the Wi-Fi network name and p
 
 from data import * # Load the data-processing module
 
-VERSION = 0.2 # Version-control
+VERSION = 0.3 # Version-control
 
 class Application:
     def __init__(self):
         self.display, self.touch, self.handler = start_board()
         self.dark_mode = True # Dark mode toggle, default on
-        self.backgrounds = [] # List of all backgrounds, for ease of access
-        self.borders = [] # List of all borders (like around boxes), for ease of access
-        self.labels = [] # List of all labels, for ease of access
+        self.backgrounds = [] # List of all backgrounds, for toggling dark-mode
+        self.borders = [] # List of all borders (like around boxes), for toggling dark-mode
+        self.labels = [] # List of all labels, for toggling dark-mode
+        self.controls = [] # List of all controls (buttons/dropdowns), for toggling dark-mode
+        self.default_stop = "Campus Gräsvik"
+        self.default_transport_type = "BUS"
+        self.STOPS = {
+                        "BUS":{
+                            "Campus Gräsvik": "740032188",
+                            "Karlskrona Centralstation": "740000230"
+                        },
+                        "TRAIN":{}
+                    }
         self.connect_wifi() # Function to connect to wifi
         self.create_ui() # Function to trigger creation of UI
         log("student application ready")
+
+    def save_settings(self):
+        """Function: Save settings to file."""
+        with open("settings.txt", "w", encoding="utf-8") as file:
+            to_write = f"{self.default_stop}\n{self.default_transport_type}\n{self.dark_mode}"
+            file.write(to_write)
+            log_written = f"Saved: \n{to_write}"
+            log(log_written)
+
+    def read_settings(self):
+        """If a settings.txt file is present, read the data from it
+        If there are not 3 lines of text in it; revert to defaults
+        """
+        try:
+            with open("settings.txt", "r", encoding="utf-8") as file:
+                lines = file.read().splitlines()
+                if len(lines) != 3:
+                    log("Invalid settings file; using defaults")
+                    return
+        except OSError as error:
+            log_file_error = f"Could not read settings; using defaults: {error}"
+            log(log_file_error)
+            return
+
+        self.default_stop = lines[0]
+        self.default_transport_type = lines[1]
+        self.dark_mode = lines[2]
 
     def apply_colors(self):
         """Function: Actually change label and tile color"""
@@ -40,53 +77,16 @@ class Application:
         for label in self.labels: # For all labels
             label.set_style_text_color(foreground_color, 0) # Change foreground color to foreground_color
 
-    def open_departures(self, stop):
-        """Function: Opens the selected departure-screen"""
-        self.remove_screen("dep_scr") ## Removes the "old" Departure-screen
-        self.create_departure_screen(stop) ## Creates a Departure-screen from a Stop
-        self.apply_colors() ## Dark/Light-mode
-        self.tileview.set_tile(self.dep_scr, lv.ANIM.OFF) ## Focus on a Departure tile
-
-    def open_stops(self, route):
-        """Show the Stops on the selected route."""
-        self.tileview.set_tile(self.routes_screen, lv.ANIM.OFF) ## Focus on Routes-screen
-
-        self.remove_screen("dep_scr") ## Remove "old" Departure-screen
-        self.remove_screen("route_scr") ## Remove "old" Stop-screen
-
-        self.create_stops_screen(route, self.stops) ## Create new Stop-screen
-        self.apply_colors() ## Dark/Light-mode
-        self.tileview.set_tile(self.route_scr, lv.ANIM.OFF) ## Focus on Stop-screen
+        for control in self.controls:
+            control.set_style_bg_opa(lv.OPA.COVER, 0)
+            control.set_style_bg_color(background_color, 0)
+            control.set_style_text_color(foreground_color, 0)
+            control.set_style_border_color(foreground_color, 0)
 
     def toggle_dark_side(self, _event):
         """Function: Toggles dark-mode on tile2..."""
         self.dark_mode = self.dark_mode_switch.has_state(lv.STATE.CHECKED) ## Dark mode = State of slider
         self.apply_colors() ## Apply colors to Backgrounds, Borders and Labels
-
-    def remove_screen(self, attribute):
-        """Delete a screen no longer focused.
-        We do this by checking a component and backtracking until we get the parent-of-the-parent (and so on)
-        What we end up on is the screen that holds those components.
-        """
-        if not hasattr(self, attribute): # If the screen doesn't exist, no need to remove it.
-            return
-        screen = getattr(self, attribute) # Fetch screen name
-
-        def belongs_to_screen(widget): # Determine if a border/background/label is part of a screen.
-            while widget is not None: # While there are still components to itterate over.
-                if widget == screen: # When.
-                    return True
-                widget = widget.get_parent() # Check that widgets parent component and repeat
-            return False
-
-        for widgets in (self.backgrounds, self.borders, self.labels): # For all components
-            widgets[:] = [
-                widget for widget in widgets
-                if not belongs_to_screen(widget)
-            ]
-
-        screen.delete()
-        delattr(self, attribute)
 
     def create_title_screen(self):
         """Function: Startup-screen"""
@@ -119,9 +119,71 @@ class Application:
         self.labels.append(self.title_screen_label_version) # Add to list of all labels
         log("title-screen created")
 
+    def clear_departures(self):
+        """Clears existing departure data to be replaced with new data."""
+        def belongs_to_departures(widget):
+            parent = widget.get_parent()
+            while parent is not None:
+                if parent == self.dep_scr:
+                    return True
+                parent = parent.get_parent()
+            return False
+
+        for widgets in (self.backgrounds, self.borders, self.labels, self.controls):
+            widgets[:] = [
+                widget for widget in widgets
+                if not belongs_to_departures(widget)
+            ]
+        self.dep_scr.clean()
+        # self.dep_scr.scroll_to_y(0, )
+
+    def on_tile_changed(self, event):
+        """To update dep"""
+        if event.get_target() != self.tileview:
+            return
+        if self.tileview.get_tile_active() != self.dep_scr:
+            return
+
+        self.clear_departures()
+
+        transport_types = list(self.STOPS)
+        transport_type = transport_types[
+            self.transport_type_dropdown.get_selected()
+        ]
+
+        stop_names = self.stop_dropdown.get_options().splitlines()
+        index = self.stop_dropdown.get_selected()
+
+        stop = None
+        message = "Select a stop in Settings."
+
+        if 0 <= index < len(stop_names):
+            stop_name = stop_names[index]
+            stop_id = self.STOPS.get(transport_type, {}).get(stop_name)
+
+            if stop_id:
+                try:
+                    stop = read_data(stop_id)
+                    if stop is not None:
+                        stop.name = stop_name
+                        log_departure = f"Displaying {len(stop.departures)} departures"
+                        log(log_departure)
+                    else:
+                        message = "No data returned for the selected stop."
+                except Exception as error:
+                    log_error = f"Could not load departures: {error}"
+                    log(log_error)
+                    message = "Could not load departures. Try again!"
+        if stop is not None:
+            self.create_departure_screen(stop)
+        else:
+            error_label = lv.label(self.dep_scr)
+            error_label.set_text(message)
+            self.labels.append(error_label)
+        self.apply_colors()
+
     def create_departure_screen(self, stop):
         """Function: Show departures on a specific stop."""
-        self.dep_scr = self.tileview.add_tile(4, 0, lv.DIR.LEFT) # Create a screen on our tileview
 
         ## Name of bus-stop
         header = lv.label(self.dep_scr) # Add a label to the Departure screen
@@ -129,195 +191,85 @@ class Application:
         header.set_width(450) # Set width of label
         header.set_pos(75, 10) # Fixed position of label
         header.set_style_text_font(lv.font_montserrat_28, 0) # Set font of the label
+        self.labels.append(header) # Add to list of labels
 
         border_width = 2 # Thickness of box edges
+        rows = [("Route", "Destination", "ETA", "Delay")]
+        column_widths = [65, 185, 100, 100]
 
         ## For each departure, we will have a row with 3 columns; Route, Direction and Time
-        for row_index, departure in enumerate(stop.departures):
-            row = lv.obj(self.dep_scr) # Create a box
-            row.set_size(450, 60) # That is the width of the entire screen and 60 high
-            row.set_pos(75, 55 + row_index * 70) # And which Y-postition depends on which row it is.
+        for departure in stop.departures:
+            dep_timestamp = departure.realtime or departure.scheduled # Realtime if realtime exists, else scheduled
+            eta = dep_timestamp[11:19] # As it's a timestamp, we only want the HH:MM:SS part, i.e. excluding the date.
+            delay = departure.delay
+            if departure.canceled:
+                delay_text = "Cancelled"
+            elif delay is None:
+                delay_text = "0"
+            elif delay == 0:
+                delay_text = "0s"
+            else:
+                minutes, seconds = divmod(abs(int(delay)), 60)
+                sign = "+" if delay > 0 else "-"
+                delay_text = f"{sign}{minutes}m {seconds}s"
+            rows.append((
+                departure.route.designation,
+                departure.route.destination or departure.route.direction,
+                eta,
+                delay_text
+            ))
 
-            #### Add for potential Dark/Light mode
-            self.backgrounds.append(row)
+            for row_index, values in enumerate(rows):
+                ## Box for each row
+                row = lv.obj(self.dep_scr)
+                row.set_size(450, 60)
+                row.set_pos(75, 55 + row_index * 70)
+                self.backgrounds.append(row)
 
-            dep_timestamp = departure.realtime if departure.realtime else departure.scheduled # Realtime if realtime exists, else scheduled
-            dep_time = dep_timestamp[11:19] # As it's a timestamp, we only want the HH:MM:SS part, i.e. excluding the date.
+                x = 0
 
-            columns = [ # The 3 columns that will be shown on the departure screen
-                (50, departure.route.designation), # Route
-                (250, departure.route.direction), # Direction ()
-                (150, dep_time) # If delay -> realtime, else scheduled
-            ]
+                for width, value in zip(column_widths, values):
+                    ## Box in row
+                    outline = lv.obj(row)
+                    outline.set_size(width, 60)
+                    outline.set_pos(x, 0)
+                    self.borders.append(outline)
 
-            x = 0
-            for width, value in columns:
-                outline = lv.obj(row) # For each value, we create a box
-                outline.set_size(width, 60) # That is of a variable width (Route does not need to be big)
-                outline.set_pos(x, 0) # And the position is dependent on the size of the box
+                    inner = lv.obj(outline)
+                    inner.set_size(
+                        width - 2 * border_width,
+                        60 - 2 * border_width,
+                    )
+                    inner.set_pos(border_width, border_width)
+                    self.backgrounds.append(inner)
 
-                #### Add for potential Dark/Light mode
-                self.borders.append(outline)
+                    label = lv.label(inner)
+                    label.set_width(width - 10)
+                    label.set_style_text_font(lv.font_montserrat_16, 0)
+                    label.set_text(str(value) if value is not None else "")
+                    label.center()
+                    self.labels.append(label)
 
-                inner = lv.obj(outline)
-                inner.set_size(
-                    width - 2 * border_width,
-                    60 - 2 * border_width
-                )
-                inner.set_pos(border_width, border_width)
-                self.backgrounds.append(inner)
-
-                label = lv.label(inner) # We create a label inside the box
-                label.set_width(width - 10) # Width-limitation on our label (so it doesn't spill over)
-                label.set_text(str(value) if value is not None else "") # Put values on labels in boxes
-                label.center() # Center on middle of the box
-                x += width # And then move on the the next box
-
-                #### Add for potential Dark/Light mode
-                self.labels.append(label)
-
-
-        #### Add for potential Dark/Light mode
-        self.labels.append(header) # Add to list of labels
-        self.backgrounds.append(self.dep_scr) # Add to list of backgrounds
-        log("departure-screen created")
-
-    def create_routes_screen(self, stops):
-        """Function: Show all routes."""
-        self.stops = stops
-        self.routes_screen = self.tileview.add_tile(2, 0, lv.DIR.LEFT) # Create a screen on our tileview
-        self.backgrounds.append(self.routes_screen)
-
-        ## Name of route.
-        header = lv.label(self.routes_screen) # Add a label to the Departure screen
-        header.set_text(f"Routes:") # Name of stop as header
-        header.set_width(450) # Set width of label
-        header.set_pos(75, 10) # Fixed position of label
-        header.set_style_text_font(lv.font_montserrat_28, 0) # Set font of the label
-        self.labels.append(header) # Add to list of labels
-
-        border_width = 2 # Thickness of box edges
-
-        routes = {} #
-
-        for stop in stops:
-            for departure in stop.departures:
-                route = departure.route
-                if route.designation:
-                    routes[route.designation] = route
-
-        for row_index, designation in enumerate(sorted(routes)):
-            route = routes[designation]
-
-            row_box = lv.obj(self.routes_screen) # For each value, we create a box
-            row_box.set_size(450, 60) # That stretches the entire screen
-            row_box.set_pos(75, 55 + row_index * 70) # And the position is dependent on the height of
-            row_box.set_style_pad_all(0, 0)
-            row_box.set_style_border_width(0, 0)
-            self.borders.append(row_box)
-
-            box_inner = lv.obj(row_box)
-            box_inner.set_size(
-                450 - 2 * border_width,
-                60 - 2 * border_width
-            )
-            box_inner.set_pos(border_width, border_width)
-            box_inner.set_style_pad_all(0, 0)
-            box_inner.set_style_border_width(0, 0)
-            self.backgrounds.append(box_inner)
-
-            box_inner.add_flag(lv.obj.FLAG.CLICKABLE)
-            box_inner.add_event_cb(
-                lambda event, selected_route=route: self.open_stops(selected_route),
-                lv.EVENT.CLICKED,
-                None
-            )
-            label = lv.label(box_inner)
-            label.remove_flag(lv.obj.FLAG.CLICKABLE)
-            label.set_width(430)
-            label.set_text(f"Route: {designation}")
-            label.center()
-            self.labels.append(label)
-        log("routes-screen created")
-
-    def create_stops_screen(self, route, stops):
-        """Function: Show all stops on a specific route."""
-        self.route_scr = self.tileview.add_tile(3, 0, lv.DIR.LEFT) # Create a screen on our tileview
-        self.backgrounds.append(self.route_scr)
-
-        ## Name of route.
-        header = lv.label(self.route_scr) # Add a label to the Departure screen
-        header.set_text(f"Route: {route.designation}") # Name of stop as header
-        header.set_width(450) # Set width of label
-        header.set_pos(75, 10) # Fixed position of label
-        header.set_style_text_font(lv.font_montserrat_28, 0) # Set font of the label
-        self.labels.append(header)
-
-        border_width = 2 # Thickness of box edges
-
-        route_stops = [
-            stop for stop in stops
-            if any(
-                departure.route.designation == route.designation
-                for departure in stop.departures
-            )
-        ]
-        ## For each stop, we will have a row with each stop
-        for row_index, stop in enumerate(route_stops):
-            row_box = lv.obj(self.route_scr) # For each value, we create a box
-            row_box.set_size(450, 60) # That stretches the entire screen
-            row_box.set_pos(75, 55 + row_index * 70) # And the position is dependent on the height of
-            row_box.set_style_pad_all(0, 0)
-            row_box.set_style_border_width(0, 0)
-            self.borders.append(row_box)
-
-            box_inner = lv.obj(row_box)
-            box_inner.set_size(
-                450 - 2 * border_width,
-                60 - 2 * border_width
-            )
-            box_inner.set_pos(border_width, border_width)
-            box_inner.set_style_pad_all(0, 0)
-            box_inner.set_style_border_width(0, 0)
-            self.backgrounds.append(box_inner)
-
-            box_inner.add_flag(lv.obj.FLAG.CLICKABLE)
-            box_inner.add_event_cb(
-                lambda event, selected_stop=stop: self.open_departures(selected_stop),
-                lv.EVENT.CLICKED,
-                None
-            )
-            label = lv.label(box_inner)
-            label.remove_flag(lv.obj.FLAG.CLICKABLE)
-            label.set_width(430)
-            label.set_text(stop.name)
-            label.center()
-            self.labels.append(label)
-        log("stops-screen created")
+                    x += width
+        log("departure-screen updated")
 
     def create_settings_screen(self):
         """Function: Create a settings screen"""
         self.settings_screen = self.tileview.add_tile(1, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a screen on our tileview
 
-        # self.settings_screen_label = lv.label(self.settings_screen) # We label on settings-screen
-        # self.settings_screen_label.set_text("I SHALL BECOME SETTINGS") # That says something (for now)
-        # self.settings_screen_label.set_style_text_font(lv.font_montserrat_28, 0) # With this font
-        # self.settings_screen_label.center() # In the center of the tile
-        # self.settings_screen.add_flag(lv.obj.FLAG.CLICKABLE) # The settings-screen is clickable (for now)
-        # self.settings_screen.add_event_cb(
-        #     self.on_tile2_clicked, lv.EVENT.CLICKED, None # Create an event if user clicks on tile
-        # )
-        dark_mode_header = lv.label(self.settings_screen)
-        dark_mode_header.set_pos(300, 20)
-        dark_mode_header.set_text("Settings")
+        settings_header = lv.label(self.settings_screen)
+        settings_header.set_pos(30, 20)
+        settings_header.set_text("Settings")
+        self.labels.append(settings_header)
+
+        # DARK MODE SWITCHER
         dark_mode_label = lv.label(self.settings_screen)
         dark_mode_label.set_text("Dark side")
-        dark_mode_label.set_pos(75, 80)
+        dark_mode_label.set_pos(75, 200)
         self.labels.append(dark_mode_label)
-        self.labels.append(dark_mode_header)
 
         self.dark_mode_switch = lv.switch(self.settings_screen)
-        self.dark_mode_switch.set_pos(250, 75)
+        self.dark_mode_switch.set_pos(250, 200)
         if self.dark_mode:
             self.dark_mode_switch.add_state(lv.STATE.CHECKED)
 
@@ -327,6 +279,94 @@ class Application:
             None
         )
 
+        # TRANSPORT TYPE
+        transport_type = lv.label(self.settings_screen)
+        transport_type.set_text("Transport type:")
+        transport_type.set_pos(75, 80)
+        self.labels.append(transport_type)
+
+        transport_type_dropdown = lv.dropdown(self.settings_screen)
+        transport_type_dropdown.set_pos(200, 80)
+        transport_type_dropdown.set_width(350)
+        transport_types = list(self.STOPS) # List all possible types
+        transport_type_dropdown.set_options("\n".join(transport_types)) # Options = List of types
+        transport_type_dropdown.set_selected(0) # Default, select first entry
+        self.transport_type_dropdown = transport_type_dropdown
+        self.controls.append(transport_type_dropdown)
+        def on_transport_type_changed(event):
+            """What to do when a different value is selected"""
+            t_index = transport_type_dropdown.get_selected()
+            selected_type = f"Type: {transport_types[t_index]}"
+            self.default_transport_type = transport_types[t_index]
+            stop_names = list(self.STOPS[self.default_transport_type]) # Update list of all possible stops
+            stop_dropdown.set_options("\n".join(stop_names)) # Display updated list
+            log(selected_type)
+        transport_type_dropdown.add_event_cb( # This listens to updates to the dropdown
+            on_transport_type_changed, # This is the function it will run.
+            lv.EVENT.VALUE_CHANGED, # When a value is changed
+            None
+        )
+
+        # STOP SELECTOR
+        stop_label = lv.label(self.settings_screen)
+        stop_label.set_text("Stop:")
+        stop_label.set_pos(75, 140)
+        self.labels.append(stop_label)
+
+        stop_dropdown = lv.dropdown(self.settings_screen)
+        stop_dropdown.set_pos(200, 140)
+        stop_dropdown.set_width(350)
+        stop_names = list(self.STOPS[self.default_transport_type])
+        stop_dropdown.set_options("\n".join(stop_names))
+        stop_dropdown.set_selected(0)
+        self.stop_dropdown = stop_dropdown
+        self.controls.append(stop_dropdown)
+        def on_stop_changed(event):
+            """What to do when a different value is selected"""
+            index = stop_dropdown.get_selected()
+            self.default_stop = stop_names[index]
+            selected_log = f"Selected: {stop_names[index]}"
+            log(selected_log)
+        stop_dropdown.add_event_cb( # This listens to updates to the dropdown
+            on_stop_changed, # This is the function it will run.
+            lv.EVENT.VALUE_CHANGED, # When a value is changed
+            None,
+        )
+
+        # SAVE SETTINGS
+        save_settings_button = lv.button(self.settings_screen)
+        save_settings_button.set_pos(75, 260)
+        save_settings_button.set_size(200, 50)
+        save_settings_button.set_style_border_width(2, 0)
+        self.controls.append(save_settings_button)
+
+        save_settings_label = lv.label(save_settings_button)
+        save_settings_label.set_text("SAVE")
+        save_settings_label.center()
+        self.labels.append(save_settings_label)
+
+        save_settings_button.add_event_cb(
+            lambda event: self.save_settings(),
+            lv.EVENT.CLICKED,
+            None,
+        )
+        # # RESET SETTINGS
+        # reset_settings_button = lv.button(self.settings_screen)
+        # reset_settings_button.set_pos(280, 260)
+        # reset_settings_button.set_size(200, 50)
+        # reset_settings_button.set_style_border_width(2, 0)
+        # self.controls.append(reset_settings_button)
+
+        # reset_settings_label = lv.label(reset_settings_button)
+        # reset_settings_label.set_text("RESET")
+        # reset_settings_label.center()
+        # self.labels.append(reset_settings_label)
+
+        # reset_settings_button.add_event_cb(
+        #     self.save_settings(),
+        #     lv.EVENT.CLICKED,
+        #     None,
+        # )
 
 
         #### Add for potential Dark/Light mode
@@ -335,15 +375,21 @@ class Application:
 
     def create_ui(self):
         'Function: Creates UI'
-        api_data = read_data(False) ## IF TRUE, ONLY USE TEST-DATA INSTEAD (i.e. don't use ACTUAL data)
+        #api_data = read_data(False) ## IF TRUE, ONLY USE TEST-DATA INSTEAD (i.e. don't use ACTUAL data)
         self.tileview = lv.tileview(lv.screen_active()) ## Creates frame to add tiles to
         self.tileview.set_size(600, 450) ## That is the size 600 in x and 450 in y
         self.tileview.set_scrollbar_mode(lv.SCROLLBAR_MODE.OFF) ## Scrollbar is that thing on your right that you can grab and scroll.
-
+        self.read_settings()
         self.create_title_screen() ## Creation of Title-Screen
         self.create_settings_screen() ## Placeholder creation of Settings-screen
-        self.create_routes_screen(api_data) ## Screen with list of Routes.
+        self.dep_scr = self.tileview.add_tile(2, 0, lv.DIR.LEFT) # Create a placeholder departure screen
+        self.backgrounds.append(self.dep_scr)
 
+        self.tileview.add_event_cb(
+            self.on_tile_changed,
+            lv.EVENT.VALUE_CHANGED,
+            None,
+        )
 
         #### Add for potential Dark/Light mode
         self.backgrounds.append(self.tileview)
