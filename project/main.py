@@ -1,15 +1,16 @@
+"""File for running main-code used in the project"""
 import sys # Access system utilities, including exception reporting
 import time # Provide timing and delay functions
 
-import lvgl as lv # Import the LVGL graphics library
-import network # Access the boards network interface
+import lvgl as lv # Import the LVGL graphics library # pylint: disable=import-error
+import network # Access the boards network interface # pylint: disable=import-error
 
-from board_lvgl import start_board # Import the function that initializes the display and touch hardware
+from board_lvgl import start_board # Import the function that initializes the display and hardware
 from debug_log import log # Import the applications logging function
 
 from secrets import WIFI_SSID, WIFI_PASSWORD # Load the Wi-Fi network name and password
 
-from data import * # Load the data-processing module
+from data import read_data # Load the data-processing module
 
 VERSION = 0.3 # Version-control
 
@@ -61,7 +62,7 @@ class Application:
 
         self.default_stop = lines[0]
         self.default_transport_type = lines[1]
-        self.dark_mode = lines[2]
+        self.dark_mode = lines[2] == "True"
 
     def apply_colors(self):
         """Function: Actually change label and tile color"""
@@ -179,8 +180,8 @@ class Application:
                     log_error = f"Could not load departures: {error}"
                     log(log_error)
                     message = "Could not load departures. Try again!"
+        started = time.ticks_ms() # pylint: disable=no-member
         if stop is not None:
-            started = time.ticks_ms() # pylint: disable=no-member
             self.create_departure_screen(stop)
         else:
             error_label = lv.label(self.dep_scr)
@@ -316,14 +317,17 @@ class Application:
         self.default_transport_type = transport_types[selected_transport_type]
         self.transport_type_dropdown = transport_type_dropdown
         self.controls.append(transport_type_dropdown)
-        def on_transport_type_changed(event):
+        def on_transport_type_changed(_event):
             """What to do when a different value is selected"""
-            t_index = transport_type_dropdown.get_selected()
-            selected_type = f"Type: {transport_types[t_index]}"
-            self.default_transport_type = transport_types[t_index]
-            stop_names = list(self.STOPS[self.default_transport_type]) # Update list of all possible stops
+            names = transport_type_dropdown.get_options().splitlines()
+            index = transport_type_dropdown.get_selected()
+            if 0 <= index < len(names):
+                selected_type = f"Type: {transport_types[index]}"
+                self.default_transport_type = names[index]
+                log(selected_type)
+            stop_names = sorted(self.STOPS[self.default_transport_type]) # Update list of all possible stops
             stop_dropdown.set_options("\n".join(stop_names)) # Display updated list
-            log(selected_type)
+            self.default_stop = stop_names[0]
         transport_type_dropdown.add_event_cb( # This listens to updates to the dropdown
             on_transport_type_changed, # This is the function it will run.
             lv.EVENT.VALUE_CHANGED, # When a value is changed
@@ -353,10 +357,11 @@ class Application:
         self.controls.append(stop_dropdown)
         def on_stop_changed(event):
             """What to do when a different value is selected"""
+            names = stop_dropdown.get_options().splitlines()
             index = stop_dropdown.get_selected()
-            self.default_stop = stop_names[index]
-            selected_log = f"Selected: {stop_names[index]}"
-            log(selected_log)
+            if 0 <= index < len(names):
+                self.default_stop = names[index]
+            log(f"Selected: {self.default_stop}")
         stop_dropdown.add_event_cb( # This listens to updates to the dropdown
             on_stop_changed, # This is the function it will run.
             lv.EVENT.VALUE_CHANGED, # When a value is changed
@@ -434,10 +439,10 @@ class Application:
         station = network.WLAN(network.STA_IF)
         station.active(True)
         station.connect(WIFI_SSID, WIFI_PASSWORD)
-        started = time.ticks_ms()
+        started = time.ticks_ms() # pylint: disable=no-member
         while (not station.isconnected() and
-               time.ticks_diff(time.ticks_ms(), started) < 15_000):
-            time.sleep_ms(250)
+               time.ticks_diff(time.ticks_ms(), started) < 15_000): # pylint: disable=no-member
+            time.sleep_ms(250) # pylint: disable=no-member
         log("Wi-Fi connected" if station.isconnected()
             else "Wi-Fi could not connect (timeout)")
 

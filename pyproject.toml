@@ -1,0 +1,14 @@
+[tool.pylint.main]
+init-hook = "import sys; sys.path[:0] = ['project', 'support']"
+
+[tool.pylint.messages_control]
+disable = [
+    "too-few-public-methods",
+    "too-many-instance-attributes",
+    "wrong-import-order",
+    "too-many-locals",
+    "attribute-defined-outside-init"
+]
+
+[tool.pylint.format]
+max-line-length = 200

@@ -6,6 +6,7 @@ try:
     from debug_log import log
 except ImportError:
     def log(message):
+        """Print diagnostics when the device logger is unavailable"""
         print(message)
 
 class Route:
@@ -46,7 +47,11 @@ def read_data(stop_id, test=False):
             payload = json.load(file)
     else:
         log("Opening API-connection")
-        response = requests.get(f"https://realtime-api.trafiklab.se/v1/departures/{stop_id}?key={API_KEY}", timeout=10)
+        url = (
+            "https://realtime-api.trafiklab.se/v1/departures/"
+            f"{stop_id}?key={API_KEY}"
+        )
+        response = requests.get(url, timeout=10)
         try:
             if response.status_code != 200:
                 raise RuntimeError(
@@ -63,8 +68,7 @@ def parse_data(payload):
     then divides them up into Route[Stop[Departures]]
     """
     stops_by_id = {}
-    # print(f"Payload_size:{len(payload)}")
-    if payload["stops"] == "":
+    if not payload["stops"]:
         return None
     for item in payload["stops"]:
         stop = Stop()
@@ -91,7 +95,8 @@ def parse_data(payload):
         departure.canceled = item["canceled"]
         departure.route = route
 
-        stop.departures.append(departure)
+        stop_id = item["stop"]["id"]
+        stops_by_id[stop_id].departures.append(departure)
 
     return stop
 
