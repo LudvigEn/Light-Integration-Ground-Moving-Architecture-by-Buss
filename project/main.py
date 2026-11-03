@@ -8,15 +8,20 @@ import network # Access the boards network interface # pylint: disable=import-er
 from board_lvgl import start_board # Import the function that initializes the display and hardware
 from debug_log import log # Import the applications logging function
 
-from secrets import WIFI_SSID, WIFI_PASSWORD # Load the Wi-Fi network name and password
+from secrets import WIFI_SSID, WIFI_PASSWORD, WIFI_LIST # Load the Wi-Fi network name and password
 
 from data import read_data # Load the data-processing module
+
+import fs_driver
 
 VERSION = 0.3 # Version-control
 
 class Application:
     def __init__(self):
         self.display, self.touch, self.handler = start_board()
+        self.image_fs = lv.fs_drv_t()
+        fs_driver.fs_register(self.image_fs, "S")
+        self.qr_image = None
         self.dark_mode = True # Dark mode toggle, default on
         self.backgrounds = [] # List of all backgrounds, for toggling dark-mode
         self.borders = [] # List of all borders (like around boxes), for toggling dark-mode
@@ -30,7 +35,6 @@ class Application:
                             "Karlskrona Centralstation": "740000230"
                         },
                         "TRAIN":{
-                            "Karlskrona Centralstation": "740000230"
                         }
                     }
         self.connect_wifi() # Function to connect to wifi
@@ -85,6 +89,9 @@ class Application:
             control.set_style_bg_color(background_color, 0)
             control.set_style_text_color(foreground_color, 0)
             control.set_style_border_color(foreground_color, 0)
+
+        self.qr_image.set_style_image_recolor(foreground_color, 0)
+        self.qr_image.set_style_image_recolor_opa(lv.OPA.COVER, 0)
 
     def toggle_dark_side(self, _event):
         """Function: Toggles dark-mode on tile2..."""
@@ -269,11 +276,11 @@ class Application:
                 self.labels.append(label)
 
                 x += width
-        log("departure-screen updated")
+        log("Departure-screen updated")
 
     def create_settings_screen(self):
         """Function: Create a settings screen"""
-        self.settings_screen = self.tileview.add_tile(1, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a screen on our tileview
+        self.settings_screen = self.tileview.add_tile(1, 0, lv.DIR.LEFT | lv.DIR.RIGHT | lv.DIR.BOTTOM) # Create a screen on our tileview
 
         settings_header = lv.label(self.settings_screen)
         settings_header.set_pos(30, 20)
@@ -403,10 +410,23 @@ class Application:
         #     None,
         # )
 
+        legal_label = lv.label(self.settings_screen)
+        legal_label.set_text("Swipe up for Trafiklab ToS")
+        legal_label.set_pos(200, 400)
+        self.labels.append(legal_label)
 
         #### Add for potential Dark/Light mode
         self.backgrounds.append(self.settings_screen)
         log("settings-screen created")
+
+    def create_qr_legal_screen(self):
+        """Shows a QR-code for the legal-text related to Trfa"""
+        self.qr_scr = self.tileview.add_tile(1, 1, lv.DIR.TOP)
+        self.backgrounds.append(self.qr_scr)
+
+        self.qr_image = lv.image(self.qr_scr)
+        self.qr_image.set_src("S:/assets/QR_Black_On_White.png")
+        self.qr_image.center()
 
     def create_ui(self):
         'Function: Creates UI'
@@ -416,6 +436,7 @@ class Application:
         self.tileview.set_scrollbar_mode(lv.SCROLLBAR_MODE.OFF) ## Scrollbar is that thing on your right that you can grab and scroll.
         self.read_settings()
         self.create_title_screen() ## Creation of Title-Screen
+        self.create_qr_legal_screen() ## Create QR-screen
         self.create_settings_screen() ## Placeholder creation of Settings-screen
         self.dep_scr = self.tileview.add_tile(2, 0, lv.DIR.LEFT) # Create a placeholder departure screen
         self.backgrounds.append(self.dep_scr)
@@ -435,16 +456,44 @@ class Application:
     @staticmethod
     def connect_wifi():
         'Function: Connects to WiFi'
-        log("connecting to Wi-Fi SSID: " + WIFI_SSID)
+        # log("connecting to Wi-Fi SSID: " + WIFI_SSID)
+        # station = network.WLAN(network.STA_IF)
+        # station.active(True)
+        # station.connect(WIFI_SSID, WIFI_PASSWORD)
+        # started = time.ticks_ms() # pylint: disable=no-member
+        # while (not station.isconnected() and
+        #        time.ticks_diff(time.ticks_ms(), started) < 15_000): # pylint: disable=no-member
+        #     time.sleep_ms(250) # pylint: disable=no-member
+        # log("Wi-Fi connected" if station.isconnected()
+        #     else "Wi-Fi could not connect (timeout)")
+        networks = WIFI_LIST or [(WIFI_SSID, WIFI_PASSWORD)]
+
         station = network.WLAN(network.STA_IF)
         station.active(True)
-        station.connect(WIFI_SSID, WIFI_PASSWORD)
-        started = time.ticks_ms() # pylint: disable=no-member
-        while (not station.isconnected() and
-               time.ticks_diff(time.ticks_ms(), started) < 15_000): # pylint: disable=no-member
-            time.sleep_ms(250) # pylint: disable=no-member
-        log("Wi-Fi connected" if station.isconnected()
-            else "Wi-Fi could not connect (timeout)")
+
+        for ssid, password in networks:
+            log(f"Connection to Wi-Fi SSID: {ssid}")
+
+            try:
+                station.disconnect()
+                station.connect(ssid, password)
+                started = time.ticks_ms()
+
+                while (
+                    not station.isconnected()
+                    and time.ticks_diff(time.ticks_ms(), started) < 15_000
+                ):
+                    time.sleep_ms(250)
+                if station.isconnected():
+                    log("Wi-Fi connected")
+                    return True
+
+                log(f"Wi-Fi connection timed out: {ssid}")
+            except OSError as error:
+                log(f"Wifi connection failed for {ssid}: {error}")
+        station.disconnect()
+        log("Could not connect to any configured network")
+        return False
 
 
 try:
