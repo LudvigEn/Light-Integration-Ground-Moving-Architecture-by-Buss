@@ -2,6 +2,7 @@
 import argparse
 import ast
 import hashlib
+from io import BytesIO
 import json
 from pathlib import Path
 import tempfile
@@ -9,6 +10,8 @@ import tkinter as tk
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+from PIL import Image
 
 from fat_image import FatImage, TruncatedImageError
 from simulator import Simulator, Network, DEFAULT_IMAGE, runtime, extract_image
@@ -364,6 +367,9 @@ class ImageTests(unittest.TestCase):
             photo.put(background, to=(0, 0, 4, 4))
             photo.put(foreground, to=(1, 1, 3, 3))
             photo.write(str(assets / name), format='png')
+        transparent = Image.new('RGBA', (4, 4), (0, 0, 0, 0))
+        transparent.paste((0, 0, 0, 255), (1, 1, 3, 3))
+        transparent.save(assets / 'transparent.png')
         self.fs_context = lv.filesystem(self.root)
         self.fs_context.__enter__()
         self.addCleanup(self.fs_context.__exit__, None, None, None)
@@ -373,18 +379,22 @@ class ImageTests(unittest.TestCase):
     def test_png_rendering_theme_switch_and_vertical_swipes(self):
         qr = lv.image(self.qr_tile)
         qr.center()
+        qr.set_src('S:/assets/transparent.png')
         switch = lv.switch(self.settings)
         switch.set_pos(250, 200)
         switch.add_state(lv.STATE.CHECKED)
 
         def apply_theme(_event=None):
             dark = switch.has_state(lv.STATE.CHECKED)
-            name = 'QR_White_On_Black.png' if dark else 'QR_Black_On_White.png'
-            qr.set_src('S:/assets/' + name)
+            self.qr_tile.set_style_bg_color('#000000' if dark else '#ffffff', 0)
+            qr.set_style_image_recolor('#ffffff' if dark else '#000000', 0)
+            qr.set_style_image_recolor_opa(lv.OPA.COVER, 0)
 
         switch.add_event_cb(apply_theme, lv.EVENT.VALUE_CHANGED, None)
         apply_theme()
         self.assertEqual(qr._photo.get(1, 1), (255, 255, 255))
+        self.assertTrue(qr._photo.transparency_get(0, 0))
+        self.assertFalse(qr._photo.transparency_get(1, 1))
         self.assertEqual((qr.width, qr.height), (4, 4))
 
         simulator = Simulator.__new__(Simulator)
@@ -398,7 +408,7 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(len(images), 1)
         self.assertEqual(self.canvas.coords(images[0]), [298, 223])
         self.assertEqual(self.canvas.itemcget(images[0], 'image'), str(qr._photo))
-        self.assertEqual(qr.get_src(), 'S:/assets/QR_White_On_Black.png')
+        self.assertEqual(qr.get_src(), 'S:/assets/transparent.png')
 
         simulator.down(SimpleNamespace(x=300, y=100))
         simulator.up(SimpleNamespace(x=300, y=350))
@@ -406,11 +416,61 @@ class ImageTests(unittest.TestCase):
         self.assertFalse(any(self.canvas.type(item) == 'image' for item in self.canvas.find_all()))
         simulator.down(SimpleNamespace(x=275, y=215))
         simulator.up(SimpleNamespace(x=275, y=215))
-        self.assertEqual(qr.get_src(), 'S:/assets/QR_Black_On_White.png')
+        self.assertEqual(qr.get_src(), 'S:/assets/transparent.png')
         self.assertEqual(qr._photo.get(1, 1), (0, 0, 0))
+        self.assertTrue(qr._photo.transparency_get(0, 0))
         simulator.move(0, 1)
         self.assertIs(self.view.get_tile_active(), self.qr_tile)
         self.assertTrue(any(self.canvas.type(item) == 'image' for item in self.canvas.find_all()))
+
+    def test_recolor_opacity_preserves_original_pixels_and_alpha(self):
+        source = Image.new('RGBA', (3, 1))
+        source.putdata([(20, 40, 60, 255), (100, 80, 60, 128), (0, 0, 0, 0)])
+        source.save(self.root / 'assets' / 'alpha.png')
+        qr = lv.image(self.qr_tile)
+        # Styles can be set before loading a source.
+        qr.set_style_image_recolor('#c86432', 0)
+        qr.set_style_image_recolor_opa(128, 0)
+        qr.set_src('S:/assets/alpha.png')
+        png = self.canvas.tk.call(str(qr._photo), 'data', '-format', 'png')
+        rendered = Image.open(BytesIO(png))
+        self.assertEqual(rendered.convert('RGBA').getchannel('A').tobytes(),
+                         source.getchannel('A').tobytes())
+        self.assertEqual(qr._photo.get(0, 0), (110, 70, 54))
+        self.assertTrue(qr._photo.transparency_get(2, 0))
+        qr.set_style_image_recolor_opa(lv.OPA.TRANSP, 0)
+        self.assertEqual(qr._photo.get(0, 0), (20, 40, 60))
+        qr.set_style_image_recolor_opa(lv.OPA.COVER, 0)
+        self.assertEqual(qr._photo.get(0, 0), (200, 100, 50))
+        photo = qr._photo
+        qr.set_style_image_recolor('#c86432', 0)
+        qr.set_style_image_recolor_opa(lv.OPA.COVER, 0)
+        self.assertIs(qr._photo, photo)
+        qr.set_src(None)
+        qr.set_src('S:/assets/alpha.png')
+        self.assertEqual(qr._photo.get(0, 0), (200, 100, 50))
+        # Recoloring tints opaque backgrounds too; it is not color inversion.
+        qr.set_src('S:/assets/QR_Black_On_White.png')
+        self.assertEqual(qr._photo.get(0, 0), (200, 100, 50))
+        self.assertFalse(qr._photo.transparency_get(0, 0))
+
+    def test_project_transparent_qr_recolors_in_both_themes(self):
+        project = Path(__file__).resolve().parents[1] / 'project'
+        with lv.filesystem(project):
+            fs_driver_sim.fs_register(lv.fs_drv_t(), 'S')
+            qr = lv.image(self.qr_tile)
+            qr.set_src('S:/assets/QR_Black_On_White.png')
+            alpha = qr._pixels.getchannel('A').tobytes()
+            self.assertIn(0, alpha)
+            self.assertIn(255, alpha)
+            module = next((x, y) for y in range(qr.height) for x in range(qr.width)
+                          if qr._pixels.getpixel((x, y))[3] == 255)
+            for color, rgb in [('#ffffff', (255, 255, 255)), ('#000000', (0, 0, 0))]:
+                qr.set_style_image_recolor(color, 0)
+                qr.set_style_image_recolor_opa(lv.OPA.COVER, 0)
+                self.assertEqual(qr._photo.get(*module), rgb)
+                self.assertTrue(qr._photo.transparency_get(0, 0))
+                self.assertEqual(qr._pixels.getchannel('A').tobytes(), alpha)
 
     def test_source_cache_clearing_and_native_size(self):
         qr = lv.image(self.qr_tile)
@@ -435,8 +495,10 @@ class ImageTests(unittest.TestCase):
             qr = lv.image(self.qr_tile)
             qr.center()
             self.view.set_tile(self.qr_tile)
-            for filename in ('QR_Black_On_White.png', 'QR_White_On_Black.png'):
-                qr.set_src('S:/assets/' + filename)
+            files = sorted((project / 'assets').glob('QR_*.png'))
+            self.assertTrue(files, 'No project QR images found')
+            for path in files:
+                qr.set_src('S:/assets/' + path.name)
                 self.assertGreater(qr.width, 0)
                 self.assertGreater(qr.height, 0)
                 lv.render()

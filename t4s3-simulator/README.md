@@ -1,7 +1,8 @@
 # T4-S3 desktop simulator
 
 Run `Launch.cmd`, or run `python simulator.py` using a Python environment with
-Tkinter and the dependencies imported by your application (currently `requests`).
+Tkinter, Pillow (for image recoloring), and the dependencies imported by your
+application (currently `requests`).
 
 Install dependencies with `python -m pip install -r requirements.txt` from this
 directory, using the Python runtime that launches the simulator. `Launch.cmd`
@@ -66,8 +67,12 @@ import fs_driver
 self.image_fs = lv.fs_drv_t()
 fs_driver.fs_register(self.image_fs, "S")
 self.qr_image = lv.image(self.qr_scr)
-self.qr_image.set_src("S:/assets/QR_White_On_Black.png")
+self.qr_image.set_src("S:/assets/QR_Black_On_White.png")
 self.qr_image.center()
+
+# In apply_colors(), after choosing the theme's foreground color:
+self.qr_image.set_style_image_recolor(foreground_color, 0)
+self.qr_image.set_style_image_recolor_opa(lv.OPA.COVER, 0)
 ```
 
 `S:/assets/...` and `S:assets/...` resolve inside the extracted filesystem image.
@@ -76,12 +81,20 @@ the repository's top-level `assets/` directory are not packaged automatically.
 Missing files and unregistered drive letters produce explicit console errors.
 Drive registrations are isolated between simulated runs.
 
-Switch between `QR_White_On_Black.png` and `QR_Black_On_White.png` with `set_src`
-when applying the application's theme. Reusing the same source keeps the loaded
-Tk image; changing sources replaces it. `set_src(None)` clears the image.
+The transparent `QR_Black_On_White.png` can serve both themes: recolor its modules
+black in light mode and white in dark mode. Transparent pixels stay transparent,
+revealing the tile's background. Recoloring an opaque image also tints its
+background, so use the transparent asset for this approach. The default recolor
+opacity is `lv.OPA.TRANSP` (original colors); `lv.OPA.COVER` fully replaces colors,
+and values from 0 to 255 blend toward the selected color without changing alpha.
+Only the default selector (`0` / `lv.PART.MAIN`) is supported.
 
-PNG images display at their native dimensions, with no implicit resizing or
-recoloring. Resize the source PNGs before packaging if they do not fit the screen.
+Reusing the same source and recolor styles keeps the rendered Tk image; changing
+the source or styles updates it. `set_src(None)` clears the image while retaining
+its styles for the next source. Switching between separate PNGs still works.
+
+PNG images display at their native dimensions, with no implicit resizing.
+Resize the source PNGs before packaging if they do not fit the screen.
 Only file-backed images are supported; LVGL image descriptors, transformations,
 and custom decoder/filesystem callbacks are not emulated.
 

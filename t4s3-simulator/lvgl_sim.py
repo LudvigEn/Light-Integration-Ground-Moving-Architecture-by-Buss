@@ -1,8 +1,11 @@
 """Explicit, small LVGL compatibility layer rendered by Tk, not native LVGL."""
 from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
 import tkinter as tk
 from types import SimpleNamespace
+
+from PIL import Image
 
 OPA = SimpleNamespace(COVER=255, TRANSP=0)
 DIR = SimpleNamespace(NONE=0, LEFT=1, RIGHT=2, TOP=4, BOTTOM=8, HOR=3, VER=12, ALL=15)
@@ -283,7 +286,7 @@ class label(obj):
 
 
 class image(obj):
-    """A file-backed image at its native pixel size; no automatic scaling."""
+    """A native-size PNG with LVGL recoloring that preserves its alpha mask."""
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -291,25 +294,66 @@ class image(obj):
         self.remove_flag(self.FLAG.SCROLLABLE)
         self._source = None
         self._photo = None
+        self._pixels = None
+        self._recolor = (0, 0, 0)
+        self._recolor_opa = OPA.TRANSP
+        self._rendered_style = None
 
     def set_src(self, source):
         if source is None:
-            self._source = self._photo = None
+            self._source = self._photo = self._pixels = None
+            self._rendered_style = None
             self.set_size(0, 0)
             return
         if source == self._source and self._photo is not None:
             return
         path = image_path(source)
-        photo = tk.PhotoImage(master=_canvas, file=str(path))
-        self._source, self._photo = source, photo
-        self.set_size(photo.width(), photo.height())
+        with Image.open(path, formats=['PNG']) as loaded:
+            pixels = loaded.convert('RGBA')
+        self._source, self._pixels = source, pixels
+        self._rendered_style = None
+        self.set_size(*pixels.size)
+        self._update_photo()
+
+    def set_style_image_recolor(self, color, selector):
+        if selector != PART.MAIN:
+            raise NotImplementedError('Only image recoloring on the default selector is supported')
+        # Use Tk's color parser, matching the simulator's other color styles.
+        rgb = tuple(channel // 257 for channel in _canvas.winfo_rgb(color))
+        self._recolor = rgb
+        self._update_photo()
+
+    def set_style_image_recolor_opa(self, opacity, selector):
+        if selector != PART.MAIN:
+            raise NotImplementedError('Only image recoloring on the default selector is supported')
+        if not isinstance(opacity, int) or not 0 <= opacity <= 255:
+            raise ValueError('Image recolor opacity must be an integer from 0 to 255')
+        self._recolor_opa = opacity
+        self._update_photo()
+
+    def _update_photo(self):
+        if self._pixels is None:
+            return
+        style = (self._recolor if self._recolor_opa else None, self._recolor_opa)
+        if style == self._rendered_style:
+            return
+        pixels = self._pixels
+        if self._recolor_opa:
+            tint = Image.new('RGBA', pixels.size, self._recolor)
+            pixels = Image.blend(pixels, tint, self._recolor_opa / 255)
+            pixels.putalpha(self._pixels.getchannel('A'))
+        encoded = BytesIO()
+        pixels.save(encoded, format='PNG')
+        self._photo = tk.PhotoImage(master=_canvas, data=encoded.getvalue(), format='png')
+        self._rendered_style = style
 
     def get_src(self):
         return self._source
 
     def delete(self):
         super().delete()
-        self._photo = None
+        self._photo = self._pixels = None
+        self._rendered_style = None
 
 
 class button(obj):
