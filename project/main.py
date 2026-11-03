@@ -1,5 +1,24 @@
 """File for running main-code used in the project"""
 import sys # Access system utilities, including exception reporting
+if (
+    __name__ == "__main__"
+    and sys.implementation.name == "cpython"
+    and "lvgl" not in sys.modules
+):
+    from pathlib import Path
+    import subprocess
+
+    simulator_dir = (
+        Path(__file__).resolve().parents[1]
+        / "t4s3-simulator"
+    )
+
+    raise SystemExit(
+        subprocess.call(
+            ["cmd.exe", "/d", "/c", "Launch.cmd"],
+            cwd=str(simulator_dir),
+        )
+    ) # Runs the simulator on RUN
 import time # Provide timing and delay functions
 
 import lvgl as lv # Import the LVGL graphics library # pylint: disable=import-error
@@ -12,11 +31,12 @@ from secrets import WIFI_SSID, WIFI_PASSWORD, WIFI_LIST # Load the Wi-Fi network
 
 from data import read_data # Load the data-processing module
 
-import fs_driver
+import fs_driver # pylint: disable=import-error
 
 VERSION = 0.3 # Version-control
 
 class Application:
+    """Class for application"""
     def __init__(self):
         self.display, self.touch, self.handler = start_board()
         self.image_fs = lv.fs_drv_t()
@@ -32,12 +52,17 @@ class Application:
         self.STOPS = {
                         "BUS":{
                             "Campus Gräsvik": "740032188",
-                            "Karlskrona Centralstation": "740000230"
+                            "Karlskrona Centralstation": "740000230",
+                            "Bergåsa Station": "740001537"
                         },
                         "TRAIN":{
+                            "Karlskrona Centralstation": "740000230",
+                            "Bergåsa Station": "740001537"
+                        },
+                        "FERRY":{
                         }
                     }
-        self.connect_wifi() # Function to connect to wifi
+        self.wifi_name: str = self.connect_wifi() or "Offline"
         self.create_ui() # Function to trigger creation of UI
         log("student application ready")
 
@@ -211,7 +236,12 @@ class Application:
 
         border_width = 2 # Thickness of box edges
         rows = [("Route", "Destination", "ETA", "Delay")]
-        column_widths = [65, 185, 100, 100]
+        column_widths = [90, 190, 90, 90]
+        transport_icons = {
+            "BUS": "S:/assets/bus.png",
+            "BOAT": "S:/assets/boat.png",
+            "TRAIN": "S:/assets/train.png"
+        }
 
         ## For each departure, we will have a row with 3 columns; Route, Direction and Time
         for departure in stop.departures:
@@ -247,7 +277,10 @@ class Application:
 
             x = 0
 
-            for width, value in zip(column_widths, values):
+            # for width, value in zip(column_widths, values):
+            for column_index, (width, value) in enumerate(
+                zip(column_widths, values)
+            ):
                 ## Box in row
                 outline = lv.obj(row)
                 outline.set_style_pad_all(0, 0)
@@ -274,6 +307,15 @@ class Application:
                 label.set_text(str(value) if value is not None else "")
                 label.center()
                 self.labels.append(label)
+                if column_index == 0 and row_index > 0:
+                    departure = stop.departures[row_index - 1]
+                    if departure.route.transport_type in transport_icons:
+                        label.set_width(width - 46)
+                        label.align(lv.ALIGN.CENTER, -18, 0)
+
+                        icon = lv.image(inner)
+                        icon.set_src(transport_icons[departure.route.transport_type])
+                        icon.align(lv.ALIGN.CENTER, 18, 1)
 
                 x += width
         log("Departure-screen updated")
@@ -286,6 +328,11 @@ class Application:
         settings_header.set_pos(30, 20)
         settings_header.set_text("Settings")
         self.labels.append(settings_header)
+
+        wifi_header = lv.label(self.settings_screen)
+        wifi_header.set_pos(580 - len(self.wifi_name) * 10, 20)
+        wifi_header.set_text(self.wifi_name)
+        self.labels.append(wifi_header)
 
         # DARK MODE SWITCHER
         dark_mode_label = lv.label(self.settings_screen)
@@ -362,7 +409,7 @@ class Application:
         self.default_stop = stop_names[selected_stop]
         self.stop_dropdown = stop_dropdown
         self.controls.append(stop_dropdown)
-        def on_stop_changed(event):
+        def on_stop_changed(_event):
             """What to do when a different value is selected"""
             names = stop_dropdown.get_options().splitlines()
             index = stop_dropdown.get_selected()
@@ -486,7 +533,7 @@ class Application:
                     time.sleep_ms(250)
                 if station.isconnected():
                     log("Wi-Fi connected")
-                    return True
+                    return ssid
 
                 log(f"Wi-Fi connection timed out: {ssid}")
             except OSError as error:
