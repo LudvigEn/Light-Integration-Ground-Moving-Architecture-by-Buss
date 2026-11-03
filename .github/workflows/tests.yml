@@ -1,12 +1,11 @@
 name: Python tests
 
 on:
-  push:
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read
+  checks: write
 
 jobs:
   tests:
@@ -43,4 +42,20 @@ jobs:
           )
 
       - name: Run tests
-        run: python -m unittest discover -s project/tests -p "*test*.py" -v
+        run: >
+          python -m xmlrunner discover
+          -s project/tests
+          -p "*test*.py"
+          -o test-results
+          -v
+
+      - name: Publish test results
+        if: ${{ !cancelled() && hashFiles('test-results/*.xml') != '' }}
+        uses: dorny/test-reporter@v3
+        with:
+          name: Individual test results
+          path: test-results/*.xml
+          reporter: python-xunit
+          list-suites: all
+          list-tests: all
+          collapsed: never
