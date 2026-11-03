@@ -20,5 +20,11 @@ class DataTests(unittest.TestCase):
         stop = data.read_data("740032188")
         self.assertIsNotNone(stop, "API returned no data")
 
+class AppTests(unittest.TestCase):
+    """Class for performing tests on Main-code"""
+    def test_example(self):
+        """Example-test: Does nothing"""
+        pass
+
 if __name__ == "__main__":
     unittest.main()

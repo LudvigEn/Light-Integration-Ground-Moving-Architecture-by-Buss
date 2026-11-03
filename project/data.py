@@ -1,7 +1,6 @@
 """Module to fetch, and return data"""
-# from datetime import datetime
 import json
-from secrets import API_KEY
+from secrets import API_KEY # pylint:disable=no-name-in-module
 import requests
 try:
     from debug_log import log

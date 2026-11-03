@@ -23,7 +23,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: python -m pip install -r t4s3-simulator/requirements.txt
+        run: python -m pip install -r requirements.txt
 
       - name: Create test credentials
         shell: python

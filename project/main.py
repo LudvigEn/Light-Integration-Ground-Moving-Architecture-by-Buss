@@ -446,5 +446,5 @@ try:
     app = Application()
 except Exception as error:
     log("FATAL: %r" % (error,))
-    sys.print_exception(error)
+    sys.print_exception(error) # pylint: disable=no-member
     raise
