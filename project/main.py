@@ -28,7 +28,9 @@ class Application:
                             "Campus Gräsvik": "740032188",
                             "Karlskrona Centralstation": "740000230"
                         },
-                        "TRAIN":{}
+                        "TRAIN":{
+                            "Karlskrona Centralstation": "740000230"
+                        }
                     }
         self.connect_wifi() # Function to connect to wifi
         self.create_ui() # Function to trigger creation of UI
@@ -139,14 +141,14 @@ class Application:
 
     def on_tile_changed(self, event):
         """To update dep"""
-        if event.get_target() != self.tileview:
+        if event.get_target_obj() != self.tileview:
             return
         if self.tileview.get_tile_active() != self.dep_scr:
             return
-
+        log("on_tile_changed called")
         self.clear_departures()
 
-        transport_types = list(self.STOPS)
+        transport_types = sorted(self.STOPS)
         transport_type = transport_types[
             self.transport_type_dropdown.get_selected()
         ]
@@ -163,7 +165,10 @@ class Application:
 
             if stop_id:
                 try:
+                    started = time.ticks_ms() # pylint: disable=no-member
                     stop = read_data(stop_id)
+                    elapsed = time.ticks_diff(time.ticks_ms(), started) # pylint: disable=no-member
+                    log(f"Fetch and parsing data: {elapsed} ms")
                     if stop is not None:
                         stop.name = stop_name
                         log_departure = f"Displaying {len(stop.departures)} departures"
@@ -175,12 +180,15 @@ class Application:
                     log(log_error)
                     message = "Could not load departures. Try again!"
         if stop is not None:
+            started = time.ticks_ms() # pylint: disable=no-member
             self.create_departure_screen(stop)
         else:
             error_label = lv.label(self.dep_scr)
             error_label.set_text(message)
             self.labels.append(error_label)
         self.apply_colors()
+        elapsed = time.ticks_diff(time.ticks_ms(), started) # pylint: disable=no-member
+        log(f"Rendering Departure-screen: {elapsed} ms")
 
     def create_departure_screen(self, stop):
         """Function: Show departures on a specific stop."""
@@ -219,38 +227,47 @@ class Application:
                 delay_text
             ))
 
-            for row_index, values in enumerate(rows):
-                ## Box for each row
-                row = lv.obj(self.dep_scr)
-                row.set_size(450, 60)
-                row.set_pos(75, 55 + row_index * 70)
-                self.backgrounds.append(row)
+        for row_index, values in enumerate(rows):
+            ## Box for each row
+            row = lv.obj(self.dep_scr)
+            row.set_style_pad_all(0, 0)
+            row.set_style_border_width(0, 0)
+            row.remove_flag(lv.obj.FLAG.SCROLLABLE)
+            row.set_size(450, 60)
+            row.set_pos(75, 55 + row_index * 70)
+            self.backgrounds.append(row)
 
-                x = 0
+            x = 0
 
-                for width, value in zip(column_widths, values):
-                    ## Box in row
-                    outline = lv.obj(row)
-                    outline.set_size(width, 60)
-                    outline.set_pos(x, 0)
-                    self.borders.append(outline)
+            for width, value in zip(column_widths, values):
+                ## Box in row
+                outline = lv.obj(row)
+                outline.set_style_pad_all(0, 0)
+                outline.set_style_border_width(0, 0)
+                outline.remove_flag(lv.obj.FLAG.SCROLLABLE)
+                outline.set_size(width, 60)
+                outline.set_pos(x, 0)
+                self.borders.append(outline)
 
-                    inner = lv.obj(outline)
-                    inner.set_size(
-                        width - 2 * border_width,
-                        60 - 2 * border_width,
-                    )
-                    inner.set_pos(border_width, border_width)
-                    self.backgrounds.append(inner)
+                inner = lv.obj(outline)
+                inner.set_style_pad_all(0, 0)
+                inner.set_style_border_width(0, 0)
+                inner.remove_flag(lv.obj.FLAG.SCROLLABLE)
+                inner.set_size(
+                    width - 2 * border_width,
+                    60 - 2 * border_width,
+                )
+                inner.set_pos(border_width, border_width)
+                self.backgrounds.append(inner)
 
-                    label = lv.label(inner)
-                    label.set_width(width - 10)
-                    label.set_style_text_font(lv.font_montserrat_16, 0)
-                    label.set_text(str(value) if value is not None else "")
-                    label.center()
-                    self.labels.append(label)
+                label = lv.label(inner)
+                label.set_width(width - 10)
+                label.set_style_text_font(lv.font_montserrat_16, 0)
+                label.set_text(str(value) if value is not None else "")
+                label.center()
+                self.labels.append(label)
 
-                    x += width
+                x += width
         log("departure-screen updated")
 
     def create_settings_screen(self):
@@ -288,9 +305,15 @@ class Application:
         transport_type_dropdown = lv.dropdown(self.settings_screen)
         transport_type_dropdown.set_pos(200, 80)
         transport_type_dropdown.set_width(350)
-        transport_types = list(self.STOPS) # List all possible types
+        transport_types = sorted(self.STOPS) # List all possible types
         transport_type_dropdown.set_options("\n".join(transport_types)) # Options = List of types
-        transport_type_dropdown.set_selected(0) # Default, select first entry
+        selected_transport_type = (
+            transport_types.index(self.default_transport_type)
+            if self.default_transport_type in transport_types
+            else 0
+        )
+        transport_type_dropdown.set_selected(selected_transport_type) # Default, select first entry
+        self.default_transport_type = transport_types[selected_transport_type]
         self.transport_type_dropdown = transport_type_dropdown
         self.controls.append(transport_type_dropdown)
         def on_transport_type_changed(event):
@@ -316,9 +339,16 @@ class Application:
         stop_dropdown = lv.dropdown(self.settings_screen)
         stop_dropdown.set_pos(200, 140)
         stop_dropdown.set_width(350)
-        stop_names = list(self.STOPS[self.default_transport_type])
+        stop_names = sorted(self.STOPS[self.default_transport_type])
         stop_dropdown.set_options("\n".join(stop_names))
-        stop_dropdown.set_selected(0)
+
+        selected_stop = (
+            stop_names.index(self.default_stop)
+            if self.default_stop in stop_names
+            else 0
+        )
+        stop_dropdown.set_selected(selected_stop)
+        self.default_stop = stop_names[selected_stop]
         self.stop_dropdown = stop_dropdown
         self.controls.append(stop_dropdown)
         def on_stop_changed(event):

@@ -1,5 +1,5 @@
 """Module to fetch, and return data"""
-from datetime import datetime
+# from datetime import datetime
 import json
 from secrets import API_KEY
 import requests
@@ -23,8 +23,8 @@ class Departure:
     """Data on Departure (Avgång) -granularity
     """
     def __init__(self):
-        self.scheduled: datetime = None
-        self.realtime: datetime = None
+        self.scheduled: str = None
+        self.realtime: str = None
         self.delay: int = None
         self.canceled: bool = False
         self.route: Route = None
@@ -46,6 +46,7 @@ def read_data(stop_id, test=False):
         with open("test_data/stop_740032188_formatted.json", "r", encoding="utf-8") as file:
             payload = json.load(file)
     else:
+        log("Opening API-connection")
         response = requests.get(f"https://realtime-api.trafiklab.se/v1/departures/{stop_id}?key={API_KEY}", timeout=10)
         try:
             if response.status_code != 200:
@@ -55,19 +56,26 @@ def read_data(stop_id, test=False):
             payload = response.json()
         finally:
             response.close()
+            log("Closing API-connection")
     return parse_data(payload)
 
 def parse_data(payload):
     """Takes indata from API-call,
     then divides them up into Route[Stop[Departures]]
     """
-    returned_stops = payload["stops"]
-    if not returned_stops:
+    stops_by_id = {}
+    # print(f"Payload_size:{len(payload)}")
+    if payload["stops"] == "":
         return None
-    stop = Stop()
-    stop.id = str(payload["query"]["query"])
-    stop.name = returned_stops[0]["name"]
-    stop.departures = []
+    for item in payload["stops"]:
+        stop = Stop()
+        stop.id = item["id"]
+        stop.name = item["name"]
+        stop.lat = item["lat"]
+        stop.lon = item["lon"]
+        stop.departures = []
+        stops_by_id[stop.id] = stop
+
     for item in payload["departures"]:
         route_data = item["route"]
 
