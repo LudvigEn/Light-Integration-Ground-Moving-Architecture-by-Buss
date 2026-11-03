@@ -1,4 +1,7 @@
 """Explicit, small LVGL compatibility layer rendered by Tk, not native LVGL."""
+from contextlib import contextmanager
+from pathlib import Path
+import tkinter as tk
 from types import SimpleNamespace
 
 OPA = SimpleNamespace(COVER=255, TRANSP=0)
@@ -18,6 +21,53 @@ font_montserrat_20 = BuiltinFont(20)
 font_montserrat_16 = BuiltinFont(16)
 _screen = None
 _canvas = None
+_filesystem_root = None
+_filesystem_drivers = {}
+
+
+@contextmanager
+def filesystem(root):
+    """Keep LVGL drive registrations local to one simulated device run."""
+    global _filesystem_root, _filesystem_drivers
+    previous_root, previous_drivers = _filesystem_root, _filesystem_drivers
+    _filesystem_root, _filesystem_drivers = Path(root).resolve(), {}
+    try:
+        yield
+    finally:
+        _filesystem_root, _filesystem_drivers = previous_root, previous_drivers
+
+
+class fs_drv_t:
+    """Registration information for a drive backed by the simulated VFS."""
+
+    def __init__(self):
+        self.init()
+
+    def init(self):
+        self.letter = 0
+        self.cache_size = 0
+
+    def register(self):
+        letter = chr(self.letter)
+        if not letter.isascii() or not letter.isalpha():
+            raise ValueError('LVGL filesystem drive must be one ASCII letter')
+        self.root = _filesystem_root or Path.cwd().resolve()
+        _filesystem_drivers[letter] = self
+
+
+def image_path(source):
+    """Resolve an LVGL filename such as S:/assets/qr.png inside its VFS."""
+    if not isinstance(source, str) or len(source) < 2 or source[1] != ':':
+        raise ValueError('Image sources must use a registered LVGL drive, e.g. S:/assets/qr.png')
+    driver = _filesystem_drivers.get(source[0])
+    if driver is None:
+        raise ValueError(f'LVGL filesystem drive {source[0]} is not registered')
+    path = (driver.root / source[2:].lstrip('/\\')).resolve()
+    if not path.is_relative_to(driver.root):
+        raise ValueError('Image source is outside the simulated filesystem')
+    if not path.is_file():
+        raise FileNotFoundError(f'Image is missing from the filesystem image: {source}')
+    return path
 
 
 def color_hex(value):
@@ -232,6 +282,36 @@ class label(obj):
         return self.text
 
 
+class image(obj):
+    """A file-backed image at its native pixel size; no automatic scaling."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.set_size(0, 0)
+        self.remove_flag(self.FLAG.SCROLLABLE)
+        self._source = None
+        self._photo = None
+
+    def set_src(self, source):
+        if source is None:
+            self._source = self._photo = None
+            self.set_size(0, 0)
+            return
+        if source == self._source and self._photo is not None:
+            return
+        path = image_path(source)
+        photo = tk.PhotoImage(master=_canvas, file=str(path))
+        self._source, self._photo = source, photo
+        self.set_size(photo.width(), photo.height())
+
+    def get_src(self):
+        return self._source
+
+    def delete(self):
+        super().delete()
+        self._photo = None
+
+
 class button(obj):
     def __init__(self, parent):
         super().__init__(parent)
@@ -415,6 +495,8 @@ def render():
         if node.bg:
             _canvas.create_rectangle(x, y, x + node.width, y + node.height,
                                      fill=node.bg, outline='')
+        if isinstance(node, image) and node._photo is not None:
+            _canvas.create_image(x, y, image=node._photo, anchor='nw')
         if isinstance(node, dropdown):
             _canvas.create_rectangle(x, y, x + node.width, y + node.height,
                                      fill=node.bg or '#eeeeee', outline='#888888')

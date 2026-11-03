@@ -3,6 +3,10 @@ import struct
 from pathlib import Path
 
 
+class TruncatedImageError(ValueError):
+    """The image ends before filesystem data referenced by its FAT tables."""
+
+
 class FatImage:
     def __init__(self, path):
         self.data = Path(path).read_bytes()
@@ -26,7 +30,7 @@ class FatImage:
 
     def read(self, offset, size):
         if offset < 0 or offset + size > len(self.data):
-            raise ValueError('Image is truncated before allocated file data; use the full t4s3-vfs.img')
+            raise TruncatedImageError('Image is truncated before allocated file data; use the full t4s3-vfs.img')
         return self.data[offset:offset + size]
 
     def chain(self, cluster):
