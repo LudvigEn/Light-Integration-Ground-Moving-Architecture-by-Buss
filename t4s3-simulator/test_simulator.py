@@ -2,6 +2,7 @@
 import argparse
 import ast
 import hashlib
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -9,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from fat_image import FatImage
-from simulator import Simulator, Network, DEFAULT_IMAGE
+from simulator import Simulator, Network, DEFAULT_IMAGE, runtime
 import lvgl_sim as lv
 
 IMAGE = DEFAULT_IMAGE
@@ -41,7 +42,7 @@ class WidgetTests(unittest.TestCase):
         calls = []
 
         def refresh_departures(event):
-            self.assertIs(event.get_target(), self.view)
+            self.assertIs(event.get_target_obj(), self.view)
             if self.view.get_tile_active() == self.other_tile:
                 self.other_tile.clean()
                 row = lv.obj(self.other_tile)
@@ -169,7 +170,7 @@ class WidgetTests(unittest.TestCase):
         self.app.refresh()
         self.assertEqual(self.canvas.create_text.call_args.kwargs['fill'], '#ff0000')
 
-    def test_stop_click_opens_and_replaces_departures(self):
+    def test_departure_rows_use_current_columns_without_duplicates(self):
         # Load the actual Application class without hardware or secrets imports.
         source = Path(__file__).resolve().parents[1] / 'project' / 'main.py'
         tree = ast.parse(source.read_text(encoding='utf-8'))
@@ -181,21 +182,53 @@ class WidgetTests(unittest.TestCase):
         app.tileview = lv.tileview(lv.screen_active())
         app.tileview.set_size(600, 450)
         app.backgrounds, app.borders, app.labels = [], [], []
+        app.controls = []
+        app.dep_scr = app.tileview.add_tile(2, 0, lv.DIR.LEFT)
         app.dark_mode = True
-        route = SimpleNamespace(designation='1', direction='Lyckeby')
+        route = SimpleNamespace(designation='1', direction='Lyckeby', destination='Centrum')
         departure = SimpleNamespace(route=route, realtime=None,
-                                    scheduled='2026-09-18T16:44:40')
-        stops = [SimpleNamespace(name=name, departures=[departure])
-                 for name in ('Campus Gräsvik', 'Another stop')]
-        app.create_stops_screen(route, stops)
-        boxes = [row.children[0] for row in app.route_scr.children if row.children]
-        for box, stop in zip(boxes + boxes, stops + stops):
-            box.click()
-            self.assertEqual(app.tileview.active, (2, 0))
+                                    scheduled='2026-09-18T16:44:40', delay=0, canceled=False)
+        updated = SimpleNamespace(route=route, realtime='2026-09-18T17:05:00',
+                                  scheduled='2026-09-18T17:00:00', delay=300, canceled=False)
+        stop = SimpleNamespace(name='Campus Gräsvik', departures=[departure, updated])
+        for _ in range(2):
+            app.clear_departures()
+            app.create_departure_screen(stop)
             self.assertEqual(app.dep_scr.children[0].get_text(), stop.name)
-            self.assertEqual(len(app.tileview.children), 2)
-            self.assertEqual(len(app.labels), 7)
-            app.tileview.set_tile(app.route_scr)
+            rows = app.dep_scr.children[1:]
+            self.assertEqual(len(rows), 3)  # Heading plus two departures.
+            texts = [[cell.children[0].children[0].get_text() for cell in row.children]
+                     for row in rows]
+            self.assertEqual(texts, [
+                ['Route', 'Destination', 'ETA', 'Delay'],
+                ['1', 'Centrum', '16:44:40', '0s'],
+                ['1', 'Centrum', '17:05:00', '+5m 0s'],
+            ])
+            for row in rows:
+                for box in [row] + row.children + [cell.children[0] for cell in row.children]:
+                    self.assertFalse(box.has_flag(lv.obj.FLAG.SCROLLABLE))
+                    self.assertEqual(box.border_width, 0)
+
+    def test_event_object_accessors_and_parameter(self):
+        events = []
+        marker = object()
+        self.tile.add_event_cb(events.append, lv.EVENT.VALUE_CHANGED, 'user data')
+        self.tile.send_event(lv.EVENT.VALUE_CHANGED, marker)
+        event = events[0]
+        self.assertIs(event.get_target_obj(), self.tile)
+        self.assertIs(event.get_current_target_obj(), self.tile)
+        self.assertIs(event.get_param(), marker)
+        self.assertEqual(event.get_user_data(), 'user data')
+
+    def test_device_font_preview_preserves_underlying_unicode(self):
+        caption = lv.label(self.tile)
+        caption.set_text('ÅÄÖ åäö BUS')
+        self.app.refresh()
+        self.assertEqual(caption.get_text(), 'ÅÄÖ åäö BUS')
+        self.assertEqual(self.canvas.create_text.call_args.kwargs['text'], '□□□ □□□ BUS')
+        self.tile.set_style_text_font(lv.font_montserrat_28, 0)
+        self.app.refresh()
+        self.assertEqual(self.canvas.create_text.call_args.kwargs['font'], ('Arial', -28))
 
     def test_switch_checked_events_and_disabled(self):
         control = lv.switch(self.tile)
@@ -323,7 +356,9 @@ class SimulatorTests(unittest.TestCase):
         before = hashlib.sha256(Path(IMAGE).read_bytes()).digest()
         # Exercise startup without an explicit filename for the default image.
         source = None if Path(IMAGE).resolve() == DEFAULT_IMAGE else IMAGE
-        app = Simulator(source, hidden=True)
+        state = tempfile.TemporaryDirectory()
+        self.addCleanup(state.cleanup)
+        app = Simulator(source, hidden=True, local_data=True, state_dir=state.name)
         try:
             self.assertEqual(app.source, Path(IMAGE).resolve())
             app.boot()
@@ -335,18 +370,36 @@ class SimulatorTests(unittest.TestCase):
             self.assertEqual(target.tileview.active, (1, 0))
             self.assertTrue(target.dark_mode)
             self.assertTrue(target.dark_mode_switch.has_state(lv.STATE.CHECKED))
-            app.down(SimpleNamespace(x=275, y=90))
-            app.up(SimpleNamespace(x=275, y=90))
+            self.assertEqual(target.transport_type_dropdown.get_options(), 'BUS\nTRAIN')
+            self.assertEqual(target.stop_dropdown.get_selected(), 0)
+            app.down(SimpleNamespace(x=275, y=215))
+            app.up(SimpleNamespace(x=275, y=215))
             self.assertFalse(target.dark_mode)
             self.assertEqual(target.settings_screen.bg, '#ffffff')
             self.assertTrue(all(label.fg == '#000000' for label in target.labels))
-            app.down(SimpleNamespace(x=275, y=90))
-            app.up(SimpleNamespace(x=275, y=90))
+            app.down(SimpleNamespace(x=275, y=215))
+            app.up(SimpleNamespace(x=275, y=215))
             self.assertTrue(target.dark_mode)
             self.assertEqual(target.settings_screen.bg, '#000000')
             self.assertTrue(all(label.fg == '#ffffff' for label in target.labels))
             app.move(1, 0)
             self.assertEqual(target.tileview.active, (2, 0))
+            self.assertGreater(len(target.dep_scr.children), 2, app.console.get('1.0', 'end'))
+            self.assertIn('Fetch and parsing data:', app.console.get('1.0', 'end'))
+            self.assertIn('Rendering Departure-screen:', app.console.get('1.0', 'end'))
+            row_count = len(target.dep_scr.children)
+            app.move(-1, 0)
+            app.move(1, 0)
+            self.assertEqual(len(target.dep_scr.children), row_count)
+            app.network.online = False
+            app.move(-1, 0)
+            app.move(1, 0)
+            self.assertEqual(target.dep_scr.children[0].get_text(),
+                             'Could not load departures. Try again!')
+            app.network.online = True
+            app.move(-1, 0)
+            app.move(1, 0)
+            self.assertEqual(len(target.dep_scr.children), row_count)
             app.wheel(SimpleNamespace(x=300, y=200, delta=-120))
             self.assertGreater(target.dep_scr.get_scroll_y(), 0)
             self.assertEqual(target.tileview.active, (2, 0))
@@ -357,6 +410,92 @@ class SimulatorTests(unittest.TestCase):
         finally:
             app.close()
         self.assertEqual(hashlib.sha256(Path(IMAGE).read_bytes()).digest(), before)
+
+    def test_saved_settings_survive_reopening_image(self):
+        with tempfile.TemporaryDirectory() as state:
+            app = Simulator(IMAGE, hidden=True, local_data=True, state_dir=state)
+            try:
+                app.boot()
+                self.assertIn('app', app.scope, app.console.get('1.0', 'end'))
+                target = app.scope['app']
+                target.tileview.set_tile(target.settings_screen)
+                app.invoke(lambda: target.stop_dropdown.select(1))
+                # Exercise SAVE through its on-screen hit target.
+                app.down(SimpleNamespace(x=100, y=280))
+                app.up(SimpleNamespace(x=100, y=280))
+                contents = (app.root / 'settings.txt').read_text(encoding='utf-8')
+                self.assertEqual(contents.splitlines(), ['Karlskrona Centralstation', 'BUS', 'True'])
+                self.assertTrue(app.settings_path().is_file())
+            finally:
+                app.close()
+            reopened = Simulator(IMAGE, hidden=True, local_data=True, state_dir=state)
+            try:
+                reopened.boot()
+                self.assertIn('app', reopened.scope, reopened.console.get('1.0', 'end'))
+                target = reopened.scope['app']
+                self.assertEqual(target.default_stop, 'Karlskrona Centralstation')
+                self.assertEqual(target.stop_dropdown.get_selected(), 1)
+                self.assertEqual((reopened.root / 'settings.txt').read_text(encoding='utf-8'), contents)
+            finally:
+                reopened.close()
+
+    def test_runtime_ticks_imports_and_offline_http(self):
+        import sys
+        import time
+        previous_secrets = sys.modules.get('secrets')
+        previous_ticks = getattr(time, 'ticks_ms', None)
+        network = Network(True)
+        network.station.active(True)
+        network.station.connect('test')
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'secrets.py').write_text('API_KEY = "test-only"\n', encoding='utf-8')
+            (root / 'test_data').mkdir()
+            (root / 'test_data' / 'stop_740032188_formatted.json').write_text(
+                json.dumps({'stops': [], 'departures': []}), encoding='utf-8')
+            with runtime(root, network, local_data=lambda: True):
+                import secrets
+                import requests
+                self.assertEqual(secrets.API_KEY, 'test-only')
+                self.assertEqual(time.ticks_diff(time.ticks_add((1 << 30) - 2, 5),
+                                                 (1 << 30) - 2), 5)
+                self.assertIsInstance(time.ticks_ms(), int)
+                with patch.object(requests.real_requests, 'get') as live_get:
+                    self.assertEqual(requests.get('https://example.invalid').json()['stops'], [])
+                    network.online = False
+                    with self.assertRaisesRegex(OSError, 'disconnected'):
+                        requests.get('https://example.invalid')
+                    live_get.assert_not_called()
+                    network.online = True
+                    requests.local_data = lambda: False
+                    requests.get('https://example.invalid', timeout=10)
+                    live_get.assert_called_once_with('https://example.invalid', timeout=10)
+            self.assertIs(sys.modules.get('secrets'), previous_secrets)
+            self.assertIs(getattr(time, 'ticks_ms', None), previous_ticks)
+
+    def test_reload_preserves_settings_and_runtime_options_before_launch(self):
+        with tempfile.TemporaryDirectory() as state:
+            app = Simulator(IMAGE, hidden=True, local_data=True, state_dir=state)
+            app.boot()
+            try:
+                self.assertIn('app', app.scope, app.console.get('1.0', 'end'))
+                app.invoke(app.scope['app'].save_settings)
+                app.online.set(False)
+                saved = app.settings_path()
+
+                def launch(command, **kwargs):
+                    self.assertTrue(saved.is_file())
+                    self.assertIsNone(app.context)
+                    self.assertIn('--offline', command)
+                    self.assertIn('--local-data', command)
+                    self.assertEqual(command[-2:], ['--state-dir', str(Path(state).resolve())])
+
+                with patch('simulator.subprocess.Popen', side_effect=launch) as process:
+                    app.reload()
+                process.assert_called_once()
+            finally:
+                if app.context:
+                    app.close()
 
     def test_network_failure(self):
         network = Network(False)

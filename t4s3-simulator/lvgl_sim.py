@@ -9,15 +9,26 @@ PART = SimpleNamespace(MAIN=0, SELECTED=0x30000)
 ANIM = SimpleNamespace(OFF=0, ON=1)
 SCROLLBAR_MODE = SimpleNamespace(OFF=0)
 ALIGN = SimpleNamespace(CENTER=0, TOP_LEFT=1, TOP_MID=2, BOTTOM_MID=3)
-font_montserrat_28 = 28
-font_montserrat_20 = 20
-font_montserrat_16 = 16
+class BuiltinFont(int):
+    """Pixel size plus the limited character coverage of device Montserrat."""
+
+
+font_montserrat_28 = BuiltinFont(28)
+font_montserrat_20 = BuiltinFont(20)
+font_montserrat_16 = BuiltinFont(16)
 _screen = None
 _canvas = None
 
 
 def color_hex(value):
     return '#%06x' % value
+
+
+def font_text(text, font):
+    if not isinstance(font, BuiltinFont):
+        return text
+    return ''.join(char if char in '\n\r\t°•' or 32 <= ord(char) < 127
+                   else '□' for char in text)
 
 
 def init():
@@ -41,7 +52,7 @@ class obj:
             parent.children.append(self)
         self.x = self.y = 0
         self.width, self.height = 100, 50
-        self.bg, self._fg, self.font = None, None, 16
+        self.bg, self._fg, self._font = None, None, None
         self.border_width, self.border_color = 0, '#000000'
         self.centered = False
         self.hidden = False
@@ -61,6 +72,15 @@ class obj:
     @fg.setter
     def fg(self, color):
         self._fg = color
+
+    @property
+    def font(self):
+        return self._font if self._font is not None else (
+            self.parent.font if self.parent else font_montserrat_16)
+
+    @font.setter
+    def font(self, font):
+        self._font = font
 
     def set_size(self, width, height):
         self.width, self.height = width, height
@@ -174,11 +194,15 @@ class obj:
     def add_event_cb(self, callback, event, data):
         self.events.append((callback, event, data))
 
-    def send_event(self, code):
-        for callback, event, data in self.events:
+    def send_event(self, code, param=None):
+        for callback, event, data in list(self.events):
             if event in (EVENT.ALL, code):
                 callback(SimpleNamespace(get_target=lambda: self,
+                                         get_target_obj=lambda: self,
+                                         get_current_target=lambda: self,
+                                         get_current_target_obj=lambda: self,
                                          get_code=lambda: code,
+                                         get_param=lambda: param,
                                          get_user_data=lambda d=data: d))
 
     def click(self):
@@ -395,7 +419,7 @@ def render():
             _canvas.create_rectangle(x, y, x + node.width, y + node.height,
                                      fill=node.bg or '#eeeeee', outline='#888888')
             caption = node.options[node.selected] if node.options else ''
-            _canvas.create_text(x + 8, y + node.height / 2, text=caption,
+            _canvas.create_text(x + 8, y + node.height / 2, text=font_text(caption, node.font),
                                 fill='#888888' if node.has_state(STATE.DISABLED) else node.fg,
                                 font=('Arial', -node.font), anchor='w',
                                 width=max(1, node.width - 32))
@@ -420,7 +444,7 @@ def render():
                                 y + 3 + diameter,
                                 fill='#dddddd' if disabled else '#ffffff', outline='')
         if node.text is not None:
-            _canvas.create_text(x, y, text=node.text, fill=node.fg,
+            _canvas.create_text(x, y, text=font_text(node.text, node.font), fill=node.fg,
                                 font=('Arial', -node.font), anchor='center' if node.centered else 'nw')
         elif bounds[0] < bounds[2] and bounds[1] < bounds[3]:
             hits.append((*bounds, node))
@@ -456,9 +480,9 @@ def render():
             _canvas.create_rectangle(left, row_y, left + node.width, row_y + row_height,
                                      fill=popup.selected_color('bg', '#476582') if selected else background,
                                      outline='#888888')
-            _canvas.create_text(left + 8, row_y + row_height / 2, text=option,
+            _canvas.create_text(left + 8, row_y + row_height / 2, text=font_text(option, popup.font),
                                 fill=popup.selected_color('fg', '#ffffff') if selected else popup.fg,
-                                font=('Arial', -node.font), anchor='w',
+                                font=('Arial', -popup.font), anchor='w',
                                 width=max(1, node.width - 16))
             choice = obj()
             choice.add_flag(obj.FLAG.CLICKABLE)

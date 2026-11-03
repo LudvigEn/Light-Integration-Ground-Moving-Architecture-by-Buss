@@ -3,9 +3,12 @@ import argparse
 import builtins
 import contextlib
 import io
+import hashlib
+import json
 import os
 from pathlib import Path
 import runpy
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,6 +22,30 @@ from fat_image import FatImage
 import lvgl_sim as lv
 
 DEFAULT_IMAGE = Path(__file__).resolve().parent.parent / 'device-build' / 't4s3-vfs-deploy.img'
+DEFAULT_STATE = Path(__file__).resolve().parent / '.state'
+
+
+class Requests(ModuleType):
+    """Keep simulated connectivity meaningful for the application's HTTP calls."""
+
+    def __init__(self, root, network, local_data):
+        super().__init__('requests')
+        self.root, self.network, self.local_data = root, network, local_data
+
+    def get(self, url, **kwargs):
+        if not self.network.station.isconnected():
+            raise OSError('Simulated Wi-Fi is disconnected')
+        if self.local_data():
+            with open(self.root / 'test_data' / 'stop_740032188_formatted.json',
+                      encoding='utf-8') as stream:
+                payload = json.load(stream)
+            # Use a new payload on every call; no API requests or keys needed.
+            response = ModuleType('response')
+            response.status_code = 200
+            response.json = lambda: payload
+            response.close = lambda: None
+            return response
+        return self.real_requests.get(url, **kwargs)
 
 
 class Network(ModuleType):
@@ -65,18 +92,26 @@ class Network(ModuleType):
 
 
 @contextlib.contextmanager
-def runtime(root, network):
+def runtime(root, network, local_data=lambda: False):
     """Compatibility for trusted application code. This is NOT a security sandbox."""
     original_open, original_listdir = builtins.open, os.listdir
     original_cwd = Path.cwd()
     original_path = sys.path[:]
-    modules = {name: sys.modules.get(name) for name in ('lvgl', 'network', 'board_lvgl', 'utime', 'uos')}
+    import requests as real_requests
+    app_names = {path.stem for path in root.glob('*.py')}
+    module_names = app_names | {'lvgl', 'network', 'board_lvgl', 'utime', 'uos', 'requests'}
+    modules = {name: sys.modules.get(name) for name in module_names}
+    for name in app_names:
+        sys.modules.pop(name, None)
     time_names = ('ticks_ms', 'ticks_us', 'ticks_diff', 'ticks_add', 'sleep_ms', 'sleep_us')
     old_time = {name: getattr(time, name, None) for name in time_names}
     old_exception = getattr(sys, 'print_exception', None)
     board = ModuleType('board_lvgl')
     board.start_board = lambda: (None, None, None)
-    sys.modules.update(lvgl=lv, network=network, board_lvgl=board, utime=time, uos=os)
+    requests = Requests(root, network, local_data)
+    requests.real_requests = real_requests
+    sys.modules.update(lvgl=lv, network=network, board_lvgl=board, utime=time, uos=os,
+                       requests=requests)
     start = time.monotonic()
     time.ticks_ms = lambda: int((time.monotonic() - start) * 1000) % (1 << 30)
     time.ticks_us = lambda: int((time.monotonic() - start) * 1000000) % (1 << 30)
@@ -120,7 +155,8 @@ def runtime(root, network):
 
 
 class Simulator:
-    def __init__(self, source=None, offline=False, hidden=False):
+    def __init__(self, source=None, offline=False, hidden=False, local_data=False,
+                 state_dir=None):
         self.source = (Path(source).resolve() if source else
                        DEFAULT_IMAGE if DEFAULT_IMAGE.is_file() else None)
         self.window = tk.Tk()
@@ -129,6 +165,7 @@ class Simulator:
         if hidden:
             self.window.withdraw()
         self.network = Network(not offline)
+        self.state_dir = Path(state_dir) if state_dir is not None else DEFAULT_STATE
         self.temp = tempfile.TemporaryDirectory(prefix='t4s3-sim-')
         self.root = Path(self.temp.name)
         self.context = None
@@ -145,6 +182,8 @@ class Simulator:
         self.online = tk.BooleanVar(value=not offline)
         ttk.Checkbutton(toolbar, text='Simulated Wi-Fi', variable=self.online,
                         command=lambda: setattr(self.network, 'online', self.online.get())).pack(side='left')
+        self.local_data = tk.BooleanVar(value=local_data)
+        ttk.Checkbutton(toolbar, text='Local test data', variable=self.local_data).pack(side='left')
         self.canvas = tk.Canvas(self.window, width=600, height=450, highlightthickness=0, bg='black')
         self.canvas.pack(padx=16, pady=8)
         lv.setup(self.canvas)
@@ -194,20 +233,38 @@ class Simulator:
             self.restart(str(self.source))
 
     def restart(self, source):
+        self.save_state()
         command = [sys.executable, str(Path(__file__).resolve()), source]
         if not self.online.get():
             command.append('--offline')
-        subprocess.Popen(command, cwd=str(Path(__file__).resolve().parent))
+        if self.local_data.get():
+            command.append('--local-data')
+        command.extend(['--state-dir', str(self.state_dir.resolve())])
         self.close()
+        subprocess.Popen(command, cwd=str(Path(__file__).resolve().parent))
+
+    def settings_path(self):
+        key = hashlib.sha256(str(self.source).encode('utf-8')).hexdigest()[:20]
+        return self.state_dir / key / 'settings.txt'
+
+    def save_state(self):
+        settings = self.root / 'settings.txt'
+        if self.source and settings.is_file():
+            destination = self.settings_path()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(settings, destination)
 
     def boot(self):
         if not self.source:
             return
         try:
             FatImage(self.source).extract(self.root)
+            saved_settings = self.settings_path()
+            if saved_settings.is_file():
+                shutil.copyfile(saved_settings, self.root / 'settings.txt')
             if not (self.root / 'main.py').is_file():
                 raise ValueError('Image contains no main.py')
-            self.context = runtime(self.root, self.network)
+            self.context = runtime(self.root, self.network, self.local_data.get)
             self.context.__enter__()
             self.status.set('Running: ' + self.source.name + ' • Wi-Fi is simulated')
             with contextlib.redirect_stdout(self), contextlib.redirect_stderr(self):
@@ -226,6 +283,7 @@ class Simulator:
         try:
             with contextlib.redirect_stdout(self), contextlib.redirect_stderr(self):
                 action()
+            self.save_state()
             self.refresh()
         except Exception:
             self.status.set('Application callback failed — see console below')
@@ -290,6 +348,7 @@ class Simulator:
         self.drag_mode = None
 
     def close(self):
+        self.save_state()
         if self.context:
             self.context.__exit__(None, None, None)
             self.context = None
@@ -301,6 +360,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('image', nargs='?', help='FAT12/16 VFS image')
     parser.add_argument('--offline', action='store_true', help='Simulate Wi-Fi connection failure')
+    parser.add_argument('--local-data', action='store_true', help='Serve bundled departure test data instead of calling the live API')
+    parser.add_argument('--state-dir', type=Path, default=DEFAULT_STATE, help='Directory for saved simulated settings')
     parser.add_argument('--list', action='store_true', help='List image files without executing them')
     args = parser.parse_args()
     if args.list:
@@ -309,7 +370,7 @@ def main():
         for name, content in FatImage(args.image).files().items():
             print('%8d  %s' % (len(content), name))
         return
-    app = Simulator(args.image, args.offline)
+    app = Simulator(args.image, args.offline, local_data=args.local_data, state_dir=args.state_dir)
     app.window.after(50, app.boot)
     app.window.mainloop()
 
