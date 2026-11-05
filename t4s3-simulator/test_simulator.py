@@ -2,16 +2,21 @@
 import argparse
 import ast
 import hashlib
+from io import BytesIO
 import json
 from pathlib import Path
 import tempfile
+import tkinter as tk
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from fat_image import FatImage
-from simulator import Simulator, Network, DEFAULT_IMAGE, runtime
+from PIL import Image
+
+from fat_image import FatImage, TruncatedImageError
+from simulator import Simulator, Network, DEFAULT_IMAGE, runtime, extract_image
 import lvgl_sim as lv
+import fs_driver_sim
 
 IMAGE = DEFAULT_IMAGE
 
@@ -331,11 +336,251 @@ class WidgetTests(unittest.TestCase):
         with patch('simulator.filedialog.askopenfilename', return_value='') as choose:
             self.app.choose()
         self.assertEqual(choose.call_args.kwargs['initialdir'], str(DEFAULT_IMAGE.parent))
-        self.assertEqual(choose.call_args.kwargs['initialfile'], 't4s3-vfs-deploy.img')
+        self.assertEqual(choose.call_args.kwargs['initialfile'], 't4s3-vfs.img')
         self.app.restart.assert_not_called()
 
 
+class ImageTests(unittest.TestCase):
+    """Real Tk PNG decoding, device paths, theme changes, and vertical swipes."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.window = tk.Tk()
+        self.window.withdraw()
+        self.addCleanup(self.window.destroy)
+        self.canvas = tk.Canvas(self.window, width=600, height=450)
+        lv.setup(self.canvas)
+        self.view = lv.tileview(lv.screen_active())
+        self.view.set_size(600, 450)
+        self.settings = self.view.add_tile(1, 0, lv.DIR.BOTTOM)
+        self.qr_tile = self.view.add_tile(1, 1, lv.DIR.TOP)
+        self.view.set_tile(self.settings)
+        assets = self.root / 'assets'
+        assets.mkdir()
+        for name, background, foreground in [
+            ('QR_Black_On_White.png', 'white', 'black'),
+            ('QR_White_On_Black.png', 'black', 'white'),
+        ]:
+            photo = tk.PhotoImage(master=self.canvas, width=4, height=4)
+            photo.put(background, to=(0, 0, 4, 4))
+            photo.put(foreground, to=(1, 1, 3, 3))
+            photo.write(str(assets / name), format='png')
+        transparent = Image.new('RGBA', (4, 4), (0, 0, 0, 0))
+        transparent.paste((0, 0, 0, 255), (1, 1, 3, 3))
+        transparent.save(assets / 'transparent.png')
+        self.fs_context = lv.filesystem(self.root)
+        self.fs_context.__enter__()
+        self.addCleanup(self.fs_context.__exit__, None, None, None)
+        self.driver = lv.fs_drv_t()
+        fs_driver_sim.fs_register(self.driver, 'S')
+
+    def test_png_rendering_theme_switch_and_vertical_swipes(self):
+        qr = lv.image(self.qr_tile)
+        qr.center()
+        qr.set_src('S:/assets/transparent.png')
+        switch = lv.switch(self.settings)
+        switch.set_pos(250, 200)
+        switch.add_state(lv.STATE.CHECKED)
+
+        def apply_theme(_event=None):
+            dark = switch.has_state(lv.STATE.CHECKED)
+            self.qr_tile.set_style_bg_color('#000000' if dark else '#ffffff', 0)
+            qr.set_style_image_recolor('#ffffff' if dark else '#000000', 0)
+            qr.set_style_image_recolor_opa(lv.OPA.COVER, 0)
+
+        switch.add_event_cb(apply_theme, lv.EVENT.VALUE_CHANGED, None)
+        apply_theme()
+        self.assertEqual(qr._photo.get(1, 1), (255, 255, 255))
+        self.assertTrue(qr._photo.transparency_get(0, 0))
+        self.assertFalse(qr._photo.transparency_get(1, 1))
+        self.assertEqual((qr.width, qr.height), (4, 4))
+
+        simulator = Simulator.__new__(Simulator)
+        simulator.canvas = self.canvas
+        simulator.invoke = lambda action: (action(), simulator.refresh())
+        simulator.refresh()
+        simulator.down(SimpleNamespace(x=300, y=350))
+        simulator.up(SimpleNamespace(x=300, y=100))
+        self.assertIs(self.view.get_tile_active(), self.qr_tile)
+        images = [item for item in self.canvas.find_all() if self.canvas.type(item) == 'image']
+        self.assertEqual(len(images), 1)
+        self.assertEqual(self.canvas.coords(images[0]), [298, 223])
+        self.assertEqual(self.canvas.itemcget(images[0], 'image'), str(qr._photo))
+        self.assertEqual(qr.get_src(), 'S:/assets/transparent.png')
+
+        simulator.down(SimpleNamespace(x=300, y=100))
+        simulator.up(SimpleNamespace(x=300, y=350))
+        self.assertIs(self.view.get_tile_active(), self.settings)
+        self.assertFalse(any(self.canvas.type(item) == 'image' for item in self.canvas.find_all()))
+        simulator.down(SimpleNamespace(x=275, y=215))
+        simulator.up(SimpleNamespace(x=275, y=215))
+        self.assertEqual(qr.get_src(), 'S:/assets/transparent.png')
+        self.assertEqual(qr._photo.get(1, 1), (0, 0, 0))
+        self.assertTrue(qr._photo.transparency_get(0, 0))
+        simulator.move(0, 1)
+        self.assertIs(self.view.get_tile_active(), self.qr_tile)
+        self.assertTrue(any(self.canvas.type(item) == 'image' for item in self.canvas.find_all()))
+
+    def test_recolor_opacity_preserves_original_pixels_and_alpha(self):
+        source = Image.new('RGBA', (3, 1))
+        source.putdata([(20, 40, 60, 255), (100, 80, 60, 128), (0, 0, 0, 0)])
+        source.save(self.root / 'assets' / 'alpha.png')
+        qr = lv.image(self.qr_tile)
+        # Styles can be set before loading a source.
+        qr.set_style_image_recolor('#c86432', 0)
+        qr.set_style_image_recolor_opa(128, 0)
+        qr.set_src('S:/assets/alpha.png')
+        png = self.canvas.tk.call(str(qr._photo), 'data', '-format', 'png')
+        rendered = Image.open(BytesIO(png))
+        self.assertEqual(rendered.convert('RGBA').getchannel('A').tobytes(),
+                         source.getchannel('A').tobytes())
+        self.assertEqual(qr._photo.get(0, 0), (110, 70, 54))
+        self.assertTrue(qr._photo.transparency_get(2, 0))
+        qr.set_style_image_recolor_opa(lv.OPA.TRANSP, 0)
+        self.assertEqual(qr._photo.get(0, 0), (20, 40, 60))
+        qr.set_style_image_recolor_opa(lv.OPA.COVER, 0)
+        self.assertEqual(qr._photo.get(0, 0), (200, 100, 50))
+        photo = qr._photo
+        qr.set_style_image_recolor('#c86432', 0)
+        qr.set_style_image_recolor_opa(lv.OPA.COVER, 0)
+        self.assertIs(qr._photo, photo)
+        qr.set_src(None)
+        qr.set_src('S:/assets/alpha.png')
+        self.assertEqual(qr._photo.get(0, 0), (200, 100, 50))
+        # Recoloring tints opaque backgrounds too; it is not color inversion.
+        qr.set_src('S:/assets/QR_Black_On_White.png')
+        self.assertEqual(qr._photo.get(0, 0), (200, 100, 50))
+        self.assertFalse(qr._photo.transparency_get(0, 0))
+
+    def test_project_transparent_qr_recolors_in_both_themes(self):
+        project = Path(__file__).resolve().parents[1] / 'project'
+        with lv.filesystem(project):
+            fs_driver_sim.fs_register(lv.fs_drv_t(), 'S')
+            qr = lv.image(self.qr_tile)
+            qr.set_src('S:/assets/QR_Black_On_White.png')
+            alpha = qr._pixels.getchannel('A').tobytes()
+            self.assertIn(0, alpha)
+            self.assertIn(255, alpha)
+            module = next((x, y) for y in range(qr.height) for x in range(qr.width)
+                          if qr._pixels.getpixel((x, y))[3] == 255)
+            for color, rgb in [('#ffffff', (255, 255, 255)), ('#000000', (0, 0, 0))]:
+                qr.set_style_image_recolor(color, 0)
+                qr.set_style_image_recolor_opa(lv.OPA.COVER, 0)
+                self.assertEqual(qr._photo.get(*module), rgb)
+                self.assertTrue(qr._photo.transparency_get(0, 0))
+                self.assertEqual(qr._pixels.getchannel('A').tobytes(), alpha)
+
+    def test_source_cache_clearing_and_native_size(self):
+        qr = lv.image(self.qr_tile)
+        qr.set_src('S:assets/QR_Black_On_White.png')
+        photo = qr._photo
+        qr.set_src(qr.get_src())
+        self.assertIs(qr._photo, photo)
+        self.assertEqual((qr.width, qr.height), (4, 4))
+        qr.set_src(None)
+        self.assertIsNone(qr.get_src())
+        self.assertIsNone(qr._photo)
+        self.assertEqual((qr.width, qr.height), (0, 0))
+        qr.set_src('S:/assets/QR_White_On_Black.png')
+        qr.delete()
+        self.assertIsNone(qr._photo)
+        self.assertNotIn(qr, self.qr_tile.children)
+
+    def test_project_qr_pngs_decode_at_native_size(self):
+        project = Path(__file__).resolve().parents[1] / 'project'
+        with lv.filesystem(project):
+            fs_driver_sim.fs_register(lv.fs_drv_t(), 'S')
+            qr = lv.image(self.qr_tile)
+            qr.center()
+            self.view.set_tile(self.qr_tile)
+            files = sorted((project / 'assets').glob('QR_*.png'))
+            self.assertTrue(files, 'No project QR images found')
+            for path in files:
+                qr.set_src('S:/assets/' + path.name)
+                self.assertGreater(qr.width, 0)
+                self.assertGreater(qr.height, 0)
+                lv.render()
+                items = [item for item in self.canvas.find_all() if self.canvas.type(item) == 'image']
+                self.assertEqual(len(items), 1)
+                self.assertEqual(self.canvas.coords(items[0]),
+                                 [(600 - qr.width) / 2, (450 - qr.height) / 2])
+
+    def test_invalid_drive_missing_file_and_vfs_escape(self):
+        qr = lv.image(self.qr_tile)
+        with self.assertRaisesRegex(ValueError, 'not registered'):
+            qr.set_src('Z:/assets/qr.png')
+        with self.assertRaisesRegex(ValueError, 'registered LVGL drive'):
+            qr.set_src('/assets/qr.png')
+        with self.assertRaisesRegex(FileNotFoundError, 'missing from the filesystem image'):
+            qr.set_src('S:/assets/missing.png')
+        with self.assertRaisesRegex(ValueError, 'outside the simulated filesystem'):
+            qr.set_src('S:/../outside.png')
+        with self.assertRaises(ValueError):
+            fs_driver_sim.fs_register(lv.fs_drv_t(), 'LONG')
+
+    def test_fs_driver_import_and_registration_are_isolated(self):
+        import sys
+        previous = sys.modules.get('fs_driver')
+        with tempfile.TemporaryDirectory() as other:
+            with runtime(Path(other), Network(True)):
+                import fs_driver
+                self.assertIs(fs_driver, fs_driver_sim)
+                with self.assertRaisesRegex(ValueError, 'not registered'):
+                    lv.image_path('S:/assets/QR_Black_On_White.png')
+                fs_driver.fs_register(lv.fs_drv_t(), 'S')
+                with self.assertRaises(FileNotFoundError):
+                    lv.image_path('S:/assets/QR_Black_On_White.png')
+            self.assertIs(sys.modules.get('fs_driver'), previous)
+            self.assertEqual(lv.image_path('S:/assets/QR_Black_On_White.png'),
+                             self.root / 'assets' / 'QR_Black_On_White.png')
+
+
 class SimulatorTests(unittest.TestCase):
+    def test_truncated_deployment_uses_matching_full_image(self):
+        original = Path(IMAGE).read_bytes()
+        # A valid filesystem header with the remainder cut off must not cause
+        # the simulator to fabricate the missing data or ignore allocated files.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            trimmed = root / 't4s3-vfs-deploy.img'
+            full = root / 't4s3-vfs.img'
+            trimmed.write_bytes(original[:512])
+            full.write_bytes(original)
+            with self.assertRaises(TruncatedImageError):
+                FatImage(trimmed).files()
+            destination = root / 'extracted'
+            self.assertEqual(extract_image(trimmed, destination), full)
+            self.assertEqual((destination / 'main.py').read_bytes(), FatImage(full).files()['main.py'])
+            self.assertEqual(trimmed.read_bytes(), original[:512])
+
+    def test_truncated_image_without_matching_full_image_still_fails(self):
+        original = Path(IMAGE).read_bytes()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            trimmed = root / 't4s3-vfs-deploy.img'
+            trimmed.write_bytes(original[:512])
+            with self.assertRaises(TruncatedImageError):
+                extract_image(trimmed, root / 'extracted')
+            different = bytearray(original)
+            different[3] ^= 1  # Change the OEM identifier, leaving FAT geometry intact.
+            (root / 't4s3-vfs.img').write_bytes(different)
+            with self.assertRaisesRegex(ValueError, 'different build'):
+                extract_image(trimmed, root / 'extracted')
+            custom = root / 'other.img'
+            custom.write_bytes(original[:512])
+            with self.assertRaises(TruncatedImageError):
+                extract_image(custom, root / 'extracted')
+
+    def test_full_and_deployment_images_share_saved_settings(self):
+        app = Simulator.__new__(Simulator)
+        app.state_dir = Path('test-state')
+        app.source = DEFAULT_IMAGE
+        full_settings = app.settings_path()
+        app.source = DEFAULT_IMAGE.with_name('t4s3-vfs-deploy.img')
+        self.assertEqual(app.settings_path(), full_settings)
+
     def test_image_roundtrip(self):
         files = FatImage(IMAGE).files()
         self.assertIn('main.py', files)
