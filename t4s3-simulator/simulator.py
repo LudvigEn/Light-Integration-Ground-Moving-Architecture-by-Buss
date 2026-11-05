@@ -152,7 +152,7 @@ def runtime(root, network, local_data=lambda: False):
     os.chdir(root)
     sys.path.insert(0, str(root))
     try:
-        with lv.filesystem(root):
+        with lv.filesystem(root), lv.timer_context():
             yield
     finally:
         builtins.open, os.listdir = original_open, original_listdir
@@ -190,6 +190,8 @@ class Simulator:
         self.temp = tempfile.TemporaryDirectory(prefix='t4s3-sim-')
         self.root = Path(self.temp.name)
         self.context = None
+        self._timer_after = None
+        self._closed = False
         self.scope = {}
         self.hits = []
         self.press = (0, 0)
@@ -301,9 +303,42 @@ class Simulator:
                     runpy.run_path(str(self.root / 'boot.py'), run_name='__boot__')
                 self.scope = runpy.run_path(str(self.root / 'main.py'), run_name='__main__')
             self.refresh()
+            self._start_timer_pump()
         except Exception:
             self.status.set('Application failed — see console below')
             self.write(traceback.format_exc())
+
+    def _start_timer_pump(self):
+        self._stop_timer_pump()
+        self._timer_after = self.window.after(1, self._pump_timers)
+
+    def _stop_timer_pump(self):
+        if self._timer_after is not None:
+            self.window.after_cancel(self._timer_after)
+            self._timer_after = None
+
+    def _timer_error(self, error):
+        self.status.set('Application timer callback failed — see console below')
+        self.write(''.join(traceback.format_exception(type(error), error, error.__traceback__)))
+
+    def _pump_timers(self):
+        self._timer_after = None
+        if self._closed or self.context is None:
+            return
+        try:
+            with contextlib.redirect_stdout(self), contextlib.redirect_stderr(self):
+                executed = lv._timer_manager.run_due(on_error=self._timer_error)
+            if executed and not self._closed:
+                self.save_state()
+                self.refresh()
+        except Exception as error:
+            self._timer_error(error)
+        finally:
+            if not self._closed and self.context is not None:
+                # Keep observing timers created by touch callbacks, even when
+                # there were none on the previous pass. Idle passes don't draw.
+                delay = max(1, min(50, lv.timer_get_time_until_next()))
+                self._timer_after = self.window.after(delay, self._pump_timers)
 
     def refresh(self):
         self.hits = lv.render()
@@ -377,6 +412,10 @@ class Simulator:
         self.drag_mode = None
 
     def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        self._stop_timer_pump()
         self.save_state()
         if self.context:
             self.context.__exit__(None, None, None)

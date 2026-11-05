@@ -181,7 +181,8 @@ class WidgetTests(unittest.TestCase):
         tree = ast.parse(source.read_text(encoding='utf-8'))
         application = next(node for node in tree.body
                            if isinstance(node, ast.ClassDef) and node.name == 'Application')
-        namespace = {'lv': lv, 'log': lambda message: None}
+        namespace = {'lv': lv, 'log': lambda message: None,
+                     'time': SimpleNamespace(ticks_ms=lambda: 0, ticks_diff=lambda a, b: a - b)}
         exec(compile(ast.Module(body=[application], type_ignores=[]), str(source), 'exec'), namespace)
         app = namespace['Application'].__new__(namespace['Application'])
         app.tileview = lv.tileview(lv.screen_active())
@@ -190,7 +191,13 @@ class WidgetTests(unittest.TestCase):
         app.controls = []
         app.dep_scr = app.tileview.add_tile(2, 0, lv.DIR.LEFT)
         app.dark_mode = True
-        route = SimpleNamespace(designation='1', direction='Lyckeby', destination='Centrum')
+        app.font_16, app.font_28 = lv.font_montserrat_16, lv.font_montserrat_28
+        app.icon_font_32 = lv.binfont_create_from_buffer(
+            (source.parent / 'fonts' / 'transit_icons_32.bin').read_bytes())
+        app.default_transport_type = 'BUS'
+        app.refresh_started = 0
+        route = SimpleNamespace(designation='1', direction='Lyckeby', destination='Centrum',
+                                transport_type='BUS')
         departure = SimpleNamespace(route=route, realtime=None,
                                     scheduled='2026-09-18T16:44:40', delay=0, canceled=False)
         updated = SimpleNamespace(route=route, realtime='2026-09-18T17:05:00',
@@ -200,7 +207,7 @@ class WidgetTests(unittest.TestCase):
             app.clear_departures()
             app.create_departure_screen(stop)
             self.assertEqual(app.dep_scr.children[0].get_text(), stop.name)
-            rows = app.dep_scr.children[1:]
+            rows = [child for child in app.dep_scr.children if child.children]
             self.assertEqual(len(rows), 3)  # Heading plus two departures.
             texts = [[cell.children[0].children[0].get_text() for cell in row.children]
                      for row in rows]
@@ -324,6 +331,36 @@ class WidgetTests(unittest.TestCase):
         self.app.refresh()
         self.assertFalse(any(hit[-1] is control for hit in self.app.hits))
 
+    def test_extended_click_area_on_controls_stays_inside_parent(self):
+        parent = lv.obj(self.tile)
+        parent.set_pos(100, 100)
+        parent.set_size(80, 60)
+        control = lv.button(parent)
+        control.set_pos(5, 5)
+        control.set_size(30, 20)
+        control.set_ext_click_area(20)
+        clicked = Mock()
+        control.add_event_cb(clicked, lv.EVENT.CLICKED, None)
+        self.app.refresh()
+        hit = next(hit for hit in self.app.hits if hit[-1] is control)
+        self.assertEqual(hit[:4], (100, 100, 155, 145))
+        touch = SimpleNamespace(x=145, y=135)
+        self.app.down(touch)
+        self.app.up(touch)
+        clicked.assert_called_once()
+        # The extended region cannot escape its parent.
+        touch = SimpleNamespace(x=95, y=110)
+        self.app.down(touch)
+        self.app.up(touch)
+        clicked.assert_called_once()
+        # A new setting replaces the old extension and follows scrolling.
+        control.set_ext_click_area(5)
+        self.overflow()
+        self.tile.scroll_to_y(110)
+        self.app.refresh()
+        hit = next(hit for hit in self.app.hits if hit[-1] is control)
+        self.assertEqual(hit[:4], (100, 0, 140, 20))
+
     def test_vertical_tile_navigation_when_content_fits(self):
         self.tile.directions |= lv.DIR.BOTTOM
         self.view.add_tile(0, 1, lv.DIR.TOP)
@@ -422,6 +459,125 @@ class ImageTests(unittest.TestCase):
         simulator.move(0, 1)
         self.assertIs(self.view.get_tile_active(), self.qr_tile)
         self.assertTrue(any(self.canvas.type(item) == 'image' for item in self.canvas.find_all()))
+
+    def test_clickable_labels_open_qr_and_return_using_visible_text_bounds(self):
+        legal = lv.label(self.settings)
+        legal.set_text('Tap for Trafiklab ToS')
+        legal.set_pos(200, 400)
+        legal.add_flag(lv.obj.FLAG.CLICKABLE)
+        legal.add_event_cb(lambda event: self.view.set_tile(self.qr_tile, lv.ANIM.OFF),
+                           lv.EVENT.CLICKED, None)
+        back = lv.label(self.qr_tile)
+        back.set_text('Back')
+        back.center()
+        back.add_flag(lv.obj.FLAG.CLICKABLE)
+        back.add_event_cb(lambda event: self.view.set_tile(self.settings, lv.ANIM.OFF),
+                          lv.EVENT.CLICKED, None)
+        simulator = Simulator.__new__(Simulator)
+        simulator.canvas = self.canvas
+        simulator.invoke = lambda action: (action(), simulator.refresh())
+        simulator.refresh()
+        text = next(item for item in self.canvas.find_all()
+                    if self.canvas.type(item) == 'text'
+                    and self.canvas.itemcget(item, 'text') == legal.get_text())
+        x1, y1, x2, y2 = self.canvas.bbox(text)
+        # The visible link extends beyond the simulator's default label width.
+        self.assertGreater(x2 - 2, legal.x + legal.width)
+        touch = SimpleNamespace(x=x2 - 2, y=(y1 + y2) / 2)
+        simulator.down(touch)
+        simulator.up(touch)
+        self.assertIs(self.view.get_tile_active(), self.qr_tile)
+        # Centered text extends left of its anchor; that side must work too.
+        text = next(item for item in self.canvas.find_all()
+                    if self.canvas.type(item) == 'text'
+                    and self.canvas.itemcget(item, 'text') == 'Back')
+        x1, y1, x2, y2 = self.canvas.bbox(text)
+        touch = SimpleNamespace(x=x1 + 2, y=(y1 + y2) / 2)
+        simulator.down(touch)
+        simulator.up(touch)
+        self.assertIs(self.view.get_tile_active(), self.settings)
+
+    def test_label_click_respects_flags_disabled_state_and_dragging(self):
+        control = lv.button(self.settings)
+        control.set_pos(75, 260)
+        control.set_size(200, 50)
+        clicked = Mock()
+        control.add_event_cb(clicked, lv.EVENT.CLICKED, None)
+        caption = lv.label(control)
+        caption.set_text('SAVE')
+        caption.center()
+        label_clicked = Mock()
+        caption.add_event_cb(label_clicked, lv.EVENT.CLICKED, None)
+        simulator = Simulator.__new__(Simulator)
+        simulator.canvas = self.canvas
+        simulator.invoke = lambda action: (action(), simulator.refresh())
+        touch = SimpleNamespace(x=175, y=285)
+        simulator.refresh()
+        simulator.down(touch)
+        simulator.up(touch)
+        clicked.assert_called_once()
+        label_clicked.assert_not_called()
+        caption.add_flag(lv.obj.FLAG.CLICKABLE)
+        simulator.refresh()
+        simulator.down(touch)
+        simulator.up(touch)
+        label_clicked.assert_called_once()
+        caption.add_state(lv.STATE.DISABLED)
+        simulator.down(touch)
+        simulator.up(touch)
+        label_clicked.assert_called_once()
+        caption.remove_state(lv.STATE.DISABLED)
+        simulator.down(touch)
+        simulator.up(SimpleNamespace(x=185, y=285))
+        label_clicked.assert_called_once()
+        caption.add_flag(lv.obj.FLAG.HIDDEN)
+        simulator.refresh()
+        self.assertFalse(any(hit[-1] is caption for hit in simulator.hits))
+
+    def test_extended_label_click_area_without_changing_visible_text(self):
+        legal = lv.label(self.settings)
+        legal.set_text('Trafiklab ToS')
+        legal.set_pos(200, 400)
+        legal.add_flag(lv.obj.FLAG.CLICKABLE)
+        clicked = Mock()
+        legal.add_event_cb(clicked, lv.EVENT.CLICKED, None)
+        simulator = Simulator.__new__(Simulator)
+        simulator.canvas = self.canvas
+        simulator.invoke = lambda action: (action(), simulator.refresh())
+        simulator.refresh()
+        original = next(hit[:4] for hit in simulator.hits if hit[-1] is legal)
+        left, top, right, bottom = original
+        touch = SimpleNamespace(x=left - 10, y=(top + bottom) / 2)
+        simulator.down(touch)
+        simulator.up(touch)
+        clicked.assert_not_called()
+
+        legal.set_ext_click_area(20)
+        simulator.refresh()
+        hit = next(hit for hit in simulator.hits if hit[-1] is legal)
+        self.assertEqual(hit[:4], (left - 20, top - 20, right + 20, bottom + 20))
+        text = next(item for item in self.canvas.find_all()
+                    if self.canvas.type(item) == 'text')
+        self.assertEqual(self.canvas.bbox(text), original)
+        simulator.down(touch)
+        simulator.up(touch)
+        clicked.assert_called_once()
+
+        legal.add_state(lv.STATE.DISABLED)
+        simulator.down(touch)
+        simulator.up(touch)
+        clicked.assert_called_once()
+        legal.remove_state(lv.STATE.DISABLED)
+        simulator.down(touch)
+        simulator.up(SimpleNamespace(x=touch.x + 10, y=touch.y))
+        clicked.assert_called_once()
+        legal.remove_flag(lv.obj.FLAG.CLICKABLE)
+        simulator.refresh()
+        self.assertFalse(any(hit[-1] is legal for hit in simulator.hits))
+        legal.add_flag(lv.obj.FLAG.CLICKABLE)
+        legal.set_ext_click_area(0)
+        simulator.refresh()
+        self.assertEqual(next(hit[:4] for hit in simulator.hits if hit[-1] is legal), original)
 
     def test_recolor_opacity_preserves_original_pixels_and_alpha(self):
         source = Image.new('RGBA', (3, 1))
@@ -615,8 +771,9 @@ class SimulatorTests(unittest.TestCase):
             self.assertEqual(target.tileview.active, (1, 0))
             self.assertTrue(target.dark_mode)
             self.assertTrue(target.dark_mode_switch.has_state(lv.STATE.CHECKED))
-            self.assertEqual(target.transport_type_dropdown.get_options(), 'BUS\nTRAIN')
-            self.assertEqual(target.stop_dropdown.get_selected(), 0)
+            self.assertEqual(target.transport_type_dropdown.get_options(), '\n'.join(sorted(target.STOPS)))
+            self.assertEqual(target.stop_dropdown.get_options().splitlines()[target.stop_dropdown.get_selected()],
+                             target.default_stop)
             app.down(SimpleNamespace(x=275, y=215))
             app.up(SimpleNamespace(x=275, y=215))
             self.assertFalse(target.dark_mode)
@@ -664,7 +821,8 @@ class SimulatorTests(unittest.TestCase):
                 self.assertIn('app', app.scope, app.console.get('1.0', 'end'))
                 target = app.scope['app']
                 target.tileview.set_tile(target.settings_screen)
-                app.invoke(lambda: target.stop_dropdown.select(1))
+                stop_index = target.stop_dropdown.get_options().splitlines().index('Karlskrona Centralstation')
+                app.invoke(lambda: target.stop_dropdown.select(stop_index))
                 # Exercise SAVE through its on-screen hit target.
                 app.down(SimpleNamespace(x=100, y=280))
                 app.up(SimpleNamespace(x=100, y=280))
@@ -679,7 +837,7 @@ class SimulatorTests(unittest.TestCase):
                 self.assertIn('app', reopened.scope, reopened.console.get('1.0', 'end'))
                 target = reopened.scope['app']
                 self.assertEqual(target.default_stop, 'Karlskrona Centralstation')
-                self.assertEqual(target.stop_dropdown.get_selected(), 1)
+                self.assertEqual(target.stop_dropdown.get_selected(), stop_index)
                 self.assertEqual((reopened.root / 'settings.txt').read_text(encoding='utf-8'), contents)
             finally:
                 reopened.close()
