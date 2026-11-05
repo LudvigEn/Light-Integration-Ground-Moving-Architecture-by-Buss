@@ -1,5 +1,14 @@
 """Explicit, small LVGL compatibility layer rendered by Tk, not native LVGL."""
+from contextlib import contextmanager
+from io import BytesIO
+import json
+from pathlib import Path
+import tkinter as tk
 from types import SimpleNamespace
+
+from PIL import Image
+from font_sim import BinaryFont, BuiltinFont, font_signature, render_text, resolve_glyph
+from timer_sim import NO_TIMER_READY, Timer as timer_t, TimerManager
 
 OPA = SimpleNamespace(COVER=255, TRANSP=0)
 DIR = SimpleNamespace(NONE=0, LEFT=1, RIGHT=2, TOP=4, BOTTOM=8, HOR=3, VER=12, ALL=15)
@@ -9,15 +18,124 @@ PART = SimpleNamespace(MAIN=0, SELECTED=0x30000)
 ANIM = SimpleNamespace(OFF=0, ON=1)
 SCROLLBAR_MODE = SimpleNamespace(OFF=0)
 ALIGN = SimpleNamespace(CENTER=0, TOP_LEFT=1, TOP_MID=2, BOTTOM_MID=3)
-class BuiltinFont(int):
-    """Pixel size plus the limited character coverage of device Montserrat."""
-
-
-font_montserrat_28 = BuiltinFont(28)
-font_montserrat_20 = BuiltinFont(20)
-font_montserrat_16 = BuiltinFont(16)
+SYMBOL = SimpleNamespace(**json.loads(
+    (Path(__file__).with_name('fonts') / 'symbols.json').read_text(encoding='utf-8')))
+for _font_size in range(12, 50, 2):
+    globals()[f'font_montserrat_{_font_size}'] = BuiltinFont(_font_size)
+FONT_DEFAULT = font_montserrat_16
 _screen = None
 _canvas = None
+_filesystem_root = None
+_filesystem_drivers = {}
+_timer_manager = TimerManager()
+
+
+@contextmanager
+def timer_context():
+    """Cancel application timers when a simulated run ends."""
+    global _timer_manager
+    previous = _timer_manager
+    _timer_manager = TimerManager()
+    try:
+        yield
+    finally:
+        _timer_manager.clear()
+        _timer_manager = previous
+
+
+def timer_create(callback, period, user_data=None):
+    return _timer_manager.create(callback, period, user_data)
+
+
+def timer_create_basic():
+    return timer_create(None, 500, None)
+
+
+def timer_handler():
+    if _timer_manager.running:
+        return 1
+    _timer_manager.run_due()
+    return _timer_manager.next_delay()
+
+
+def timer_enable(enabled):
+    _timer_manager.enabled = bool(enabled)
+
+
+def timer_get_time_until_next():
+    return _timer_manager.next_delay()
+
+
+# Expose the LVGL function spellings as well as timer.pause(), reset(), etc.
+timer_delete = timer_t.delete
+timer_del = timer_delete  # LVGL 8 name.
+timer_pause = timer_t.pause
+timer_resume = timer_t.resume
+timer_ready = timer_t.ready
+timer_reset = timer_t.reset
+timer_set_period = timer_t.set_period
+timer_get_period = timer_t.get_period
+timer_set_cb = timer_t.set_cb
+timer_set_user_data = timer_t.set_user_data
+timer_get_user_data = timer_t.get_user_data
+timer_get_paused = timer_t.get_paused
+timer_set_repeat_count = timer_t.set_repeat_count
+timer_set_auto_delete = timer_t.set_auto_delete
+
+
+@contextmanager
+def filesystem(root):
+    """Keep LVGL drive registrations local to one simulated device run."""
+    global _filesystem_root, _filesystem_drivers
+    previous_root, previous_drivers = _filesystem_root, _filesystem_drivers
+    builtin_fallbacks = [(font, font.fallback) for font in globals().values() if isinstance(font, BuiltinFont)]
+    for font, _ in builtin_fallbacks:
+        font.fallback = None
+    _filesystem_root, _filesystem_drivers = Path(root).resolve(), {}
+    try:
+        yield
+    finally:
+        _filesystem_root, _filesystem_drivers = previous_root, previous_drivers
+        for font, fallback in builtin_fallbacks:
+            font.fallback = fallback
+
+
+class fs_drv_t:
+    """Registration information for a drive backed by the simulated VFS."""
+
+    def __init__(self):
+        self.init()
+
+    def init(self):
+        self.letter = 0
+        self.cache_size = 0
+
+    def register(self):
+        letter = chr(self.letter)
+        if not letter.isascii() or not letter.isalpha():
+            raise ValueError('LVGL filesystem drive must be one ASCII letter')
+        self.root = _filesystem_root or Path.cwd().resolve()
+        _filesystem_drivers[letter] = self
+
+
+def _filesystem_path(source, kind):
+    """Resolve an LVGL filename inside its registered virtual filesystem."""
+    if not isinstance(source, str) or len(source) < 2 or source[1] != ':':
+        raise ValueError(f'{kind} sources must use a registered LVGL drive, e.g. S:/assets/file')
+    driver = _filesystem_drivers.get(source[0])
+    if driver is None:
+        raise ValueError(f'LVGL filesystem drive {source[0]} is not registered')
+    path = (driver.root / source[2:].lstrip('/\\')).resolve()
+    if not path.is_relative_to(driver.root):
+        raise ValueError(f'{kind} source is outside the simulated filesystem')
+    if not path.is_file():
+        raise FileNotFoundError(f'{kind} is missing from the filesystem image: {source}')
+    return path
+
+
+def image_path(source):
+    """Resolve a PNG filename such as S:/assets/qr.png inside its VFS."""
+    return _filesystem_path(source, 'Image')
 
 
 def color_hex(value):
@@ -27,8 +145,60 @@ def color_hex(value):
 def font_text(text, font):
     if not isinstance(font, BuiltinFont):
         return text
-    return ''.join(char if char in '\n\r\t°•' or 32 <= ord(char) < 127
+    return ''.join(char if char in '\n\r\t' or resolve_glyph(font, ord(char))[1] is not None
                    else '□' for char in text)
+
+
+def binfont_create(source):
+    """Load glyphs from the same registered drive paths as the device."""
+    return BinaryFont(_filesystem_path(source, 'Font').read_bytes(), source)
+
+
+def binfont_create_from_buffer(buffer, size=None):
+    data = bytes(buffer)
+    if size is not None:
+        if not 0 <= size <= len(data):
+            raise ValueError('Invalid binary font buffer size')
+        data = data[:size]
+    return BinaryFont(data)
+
+
+def binfont_destroy(font):
+    if font is not None:
+        if not isinstance(font, BinaryFont):
+            raise TypeError('Only allocated binary fonts can be destroyed')
+        font.destroy()
+
+
+# LVGL 8 spellings, retained alongside the firmware's LVGL 9 API.
+font_load = binfont_create
+font_free = binfont_destroy
+
+
+def _draw_text(node, x, y, text, color, font, anchor='nw', width=None, slot='text'):
+    # Retain the existing Tk preview for ordinary built-in text. Custom fonts,
+    # fallbacks, and symbols use their actual bitmap data, never OS substitutes.
+    if (isinstance(font, BuiltinFont) and font.fallback is None
+            and all(ord(char) < 0xF000 for char in str(text))):
+        options = {'width': width} if width is not None else {}
+        return _canvas.create_text(x, y, text=font_text(text, font), fill=color,
+                                   font=('Arial', -int(font)), anchor=anchor, **options)
+    key = (str(text), color, font_signature(font), width)
+    cached = node._text_images.get(slot)
+    if cached is None or cached[0] != key:
+        rgb = tuple(channel // 257 for channel in _canvas.winfo_rgb(color))
+        pixels = render_text(text, font, rgb, width)
+        stream = BytesIO()
+        pixels.save(stream, format='PNG')
+        photo = tk.PhotoImage(master=_canvas, data=stream.getvalue(), format='png')
+        node._text_images[slot] = key, photo
+    else:
+        photo = cached[1]
+    return _canvas.create_image(x, y, image=photo, anchor=anchor)
+
+
+def _font_size(font):
+    return int(font) if isinstance(font, int) else font.size
 
 
 def init():
@@ -62,6 +232,9 @@ class obj:
         self.scroll_dir = DIR.ALL
         self.events = []
         self.text = None
+        self._text_images = {}
+        self._explicit_width = False
+        self._ext_click_area = 0
 
     @property
     def fg(self):
@@ -84,9 +257,11 @@ class obj:
 
     def set_size(self, width, height):
         self.width, self.height = width, height
+        self._explicit_width = True
 
     def set_width(self, width):
         self.width = width
+        self._explicit_width = True
 
     def set_height(self, height):
         self.height = height
@@ -152,6 +327,10 @@ class obj:
     def has_flag(self, flag):
         return bool(self.flags & flag)
 
+    def set_ext_click_area(self, size):
+        """Extend touch bounds on all sides without changing the drawing."""
+        self._ext_click_area = max(0, int(size))
+
     def add_state(self, state):
         self.state |= state
 
@@ -210,6 +389,7 @@ class obj:
             self.send_event(EVENT.CLICKED)
 
     def delete(self):
+        self._text_images.clear()
         if self.parent:
             self.parent.children.remove(self)
 
@@ -232,9 +412,104 @@ class label(obj):
         return self.text
 
 
+class image(obj):
+    """A native-size PNG or text/symbol image using the selected font."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.set_size(0, 0)
+        self.remove_flag(self.FLAG.SCROLLABLE)
+        self._source = None
+        self._photo = None
+        self._pixels = None
+        self._recolor = (0, 0, 0)
+        self._recolor_opa = OPA.TRANSP
+        self._rendered_style = None
+        self._symbol_text = None
+        self._symbol_size_key = None
+
+    def set_src(self, source):
+        if source is None:
+            self._source = self._photo = self._pixels = None
+            self._rendered_style = None
+            self._symbol_text = None
+            self._text_images.clear()
+            self.set_size(0, 0)
+            return
+        if source == self._source and self._photo is not None:
+            return
+        if isinstance(source, str) and source and ord(source[0]) >= 0x80:
+            self._source = source
+            self._symbol_text = source.removeprefix(SYMBOL.DUMMY)
+            self._photo = self._pixels = None
+            self._rendered_style = self._symbol_size_key = None
+            self._text_images.clear()
+            self._update_symbol_size()
+            return
+        path = image_path(source)
+        with Image.open(path, formats=['PNG']) as loaded:
+            pixels = loaded.convert('RGBA')
+        self._source, self._pixels = source, pixels
+        self._symbol_text = None
+        self._text_images.clear()
+        self._rendered_style = None
+        self.set_size(*pixels.size)
+        self._update_photo()
+
+    def _update_symbol_size(self):
+        if self._symbol_text is None:
+            return
+        key = self._symbol_text, font_signature(self.font)
+        if key != self._symbol_size_key:
+            pixels = render_text(self._symbol_text, self.font, '#ffffff')
+            self.set_size(*pixels.size)
+            self._symbol_size_key = key
+
+    def set_style_image_recolor(self, color, selector):
+        if selector != PART.MAIN:
+            raise NotImplementedError('Only image recoloring on the default selector is supported')
+        # Use Tk's color parser, matching the simulator's other color styles.
+        rgb = tuple(channel // 257 for channel in _canvas.winfo_rgb(color))
+        self._recolor = rgb
+        self._update_photo()
+
+    def set_style_image_recolor_opa(self, opacity, selector):
+        if selector != PART.MAIN:
+            raise NotImplementedError('Only image recoloring on the default selector is supported')
+        if not isinstance(opacity, int) or not 0 <= opacity <= 255:
+            raise ValueError('Image recolor opacity must be an integer from 0 to 255')
+        self._recolor_opa = opacity
+        self._update_photo()
+
+    def _update_photo(self):
+        if self._pixels is None:
+            return
+        style = (self._recolor if self._recolor_opa else None, self._recolor_opa)
+        if style == self._rendered_style:
+            return
+        pixels = self._pixels
+        if self._recolor_opa:
+            tint = Image.new('RGBA', pixels.size, self._recolor)
+            pixels = Image.blend(pixels, tint, self._recolor_opa / 255)
+            pixels.putalpha(self._pixels.getchannel('A'))
+        encoded = BytesIO()
+        pixels.save(encoded, format='PNG')
+        self._photo = tk.PhotoImage(master=_canvas, data=encoded.getvalue(), format='png')
+        self._rendered_style = style
+
+    def get_src(self):
+        return self._source
+
+    def delete(self):
+        super().delete()
+        self._photo = self._pixels = None
+        self._rendered_style = None
+
+
 class button(obj):
     def __init__(self, parent):
         super().__init__(parent)
+        self.add_flag(self.FLAG.CLICKABLE)
         self.bg = '#dddddd'
 
 
@@ -397,9 +672,25 @@ def render():
     hits = []
     dropdowns = []
 
-    def draw(node, px=0, py=0):
+    def intersect(area, clip):
+        return (max(area[0], clip[0]), max(area[1], clip[1]),
+                min(area[2], clip[2]), min(area[3], clip[3]))
+
+    def add_hit(node, area, clip):
+        padding = node._ext_click_area if node.has_flag(obj.FLAG.CLICKABLE) else 0
+        left, top, right, bottom = area
+        bounds = intersect((left - padding, top - padding,
+                            right + padding, bottom + padding), clip)
+        if bounds[0] < bounds[2] and bounds[1] < bounds[3]:
+            hits.append((*bounds, node))
+
+    def draw(node, px=0, py=0, clip=None):
         if node.hidden:
             return
+        if clip is None:
+            clip = (0, 0, _screen.width, _screen.height)
+        if isinstance(node, image):
+            node._update_symbol_size()
         x, y = px + node.x, py + node.y
         if node.centered and node.parent:
             x += node.parent.width / 2
@@ -407,22 +698,24 @@ def render():
             if node.text is None:
                 x -= node.width / 2
                 y -= node.height / 2
-        # The canvas clips drawing at its edges. Clip hit targets as well,
-        # so off-screen children cannot receive clicks after scrolling.
-        bounds = (max(0, x), max(0, y),
-                  min(_screen.width, x + node.width),
-                  min(_screen.height, y + node.height))
+        # Extended touch areas stay within the parent's bounds, as on LVGL.
+        # Use the unexpanded bounds to clip children and popup visibility.
+        bounds = intersect((x, y, x + node.width, y + node.height), clip)
         if node.bg:
             _canvas.create_rectangle(x, y, x + node.width, y + node.height,
                                      fill=node.bg, outline='')
+        if isinstance(node, image):
+            if node._symbol_text is not None:
+                _draw_text(node, x, y, node._symbol_text, node.fg, node.font, slot='symbol')
+            elif node._photo is not None:
+                _canvas.create_image(x, y, image=node._photo, anchor='nw')
         if isinstance(node, dropdown):
             _canvas.create_rectangle(x, y, x + node.width, y + node.height,
                                      fill=node.bg or '#eeeeee', outline='#888888')
             caption = node.options[node.selected] if node.options else ''
-            _canvas.create_text(x + 8, y + node.height / 2, text=font_text(caption, node.font),
-                                fill='#888888' if node.has_state(STATE.DISABLED) else node.fg,
-                                font=('Arial', -node.font), anchor='w',
-                                width=max(1, node.width - 32))
+            _draw_text(node, x + 8, y + node.height / 2, caption,
+                       '#888888' if node.has_state(STATE.DISABLED) else node.fg,
+                       node.font, anchor='w', width=max(1, node.width - 32), slot='caption')
             _canvas.create_text(x + node.width - 14, y + node.height / 2,
                                 text='▾', fill=node.fg, anchor='center')
             if node.opened and not node.has_state(STATE.DISABLED) and bounds[0] < bounds[2] and bounds[1] < bounds[3]:
@@ -444,15 +737,23 @@ def render():
                                 y + 3 + diameter,
                                 fill='#dddddd' if disabled else '#ffffff', outline='')
         if node.text is not None:
-            _canvas.create_text(x, y, text=font_text(node.text, node.font), fill=node.fg,
-                                font=('Arial', -node.font), anchor='center' if node.centered else 'nw')
-        elif bounds[0] < bounds[2] and bounds[1] < bounds[3]:
-            hits.append((*bounds, node))
+            text_item = _draw_text(
+                node, x, y, node.text, node.fg, node.font,
+                anchor='center' if node.centered else 'nw',
+                width=node.width if node._explicit_width else None)
+            if node.has_flag(obj.FLAG.CLICKABLE):
+                # Labels use content sizing on the device. Match the visible
+                # text here, including centered text and long link captions.
+                text_bounds = _canvas.bbox(text_item)
+                if text_bounds:
+                    add_hit(node, text_bounds, clip)
+        else:
+            add_hit(node, (x, y, x + node.width, y + node.height), clip)
         node.scroll_to_y(node.scroll_y)
         for child in node.children:
             if isinstance(node, tileview) and child.coord != node.active:
                 continue
-            draw(child, x, y - node.scroll_y)
+            draw(child, x, y - node.scroll_y, bounds)
         if node.border_width:
             width = min(node.border_width, node.width, node.height)
             inset = width / 2
@@ -466,7 +767,7 @@ def render():
         blocker.add_flag(obj.FLAG.CLICKABLE)
         blocker.click = node.close
         hits.append((0, 0, _screen.width, _screen.height, blocker))
-        row_height = max(28, node.font + 12)
+        row_height = max(28, _font_size(node.font) + 12)
         popup_height = row_height * len(node.options)
         left = max(0, min(x, _screen.width - node.width))
         top = y + node.height
@@ -480,10 +781,9 @@ def render():
             _canvas.create_rectangle(left, row_y, left + node.width, row_y + row_height,
                                      fill=popup.selected_color('bg', '#476582') if selected else background,
                                      outline='#888888')
-            _canvas.create_text(left + 8, row_y + row_height / 2, text=font_text(option, popup.font),
-                                fill=popup.selected_color('fg', '#ffffff') if selected else popup.fg,
-                                font=('Arial', -popup.font), anchor='w',
-                                width=max(1, node.width - 16))
+            _draw_text(popup, left + 8, row_y + row_height / 2, option,
+                       popup.selected_color('fg', '#ffffff') if selected else popup.fg,
+                       popup.font, anchor='w', width=max(1, node.width - 16), slot=f'row{index}')
             choice = obj()
             choice.add_flag(obj.FLAG.CLICKABLE)
             choice.click = lambda n=node, i=index: n.select(i)

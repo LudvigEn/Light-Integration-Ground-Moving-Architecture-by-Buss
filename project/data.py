@@ -18,6 +18,7 @@ class Route:
         self.origin: str = None
         self.destination: str = None
         self.stops: list[Stop] = None
+        self.transport_type: str = None
 
 class Departure:
     """Data on Departure (Avgång) -granularity
@@ -43,7 +44,7 @@ def read_data(stop_id, test=False):
     """Function to connect to, and fetch API-data"""
 
     if test: # This is just for test-cases (so we don't make an absurd amount of API-calls)
-        with open("test_data/stop_740032188_formatted.json", "r", encoding="utf-8") as file:
+        with open("../assets/test_data/stop_740032188_formatted.json", "r", encoding="utf-8") as file:
             payload = json.load(file)
     else:
         log("Opening API-connection")
@@ -67,6 +68,12 @@ def parse_data(payload):
     """Takes indata from API-call,
     then divides them up into Route[Stop[Departures]]
     """
+    # transport_icons = {
+    #     "BUS": "S:/assets/bus.png",
+    #     "BOAT": "S:/assets/boat.png",
+    #     "TRAIN": "S:/assets/train.png"
+    # }
+    query_time = payload["timestamp"]
     stops_by_id = {}
     if not payload["stops"]:
         return None
@@ -87,6 +94,7 @@ def parse_data(payload):
         route.direction = route_data["direction"]
         route.origin = route_data["origin"]["name"]
         route.destination = route_data["destination"]["name"]
+        route.transport_type = route_data["transport_mode"]
 
         departure = Departure()
         departure.scheduled = item["scheduled"]
@@ -98,7 +106,21 @@ def parse_data(payload):
         stop_id = item["stop"]["id"]
         stops_by_id[stop_id].departures.append(departure)
 
-    return stop
+    combined_stop = Stop()
+    combined_stop.id = payload["query"]["query"]
+    combined_stop.name = payload["stops"][0]["name"]
+    combined_stop.lat = payload["stops"][0]["lat"]
+    combined_stop.lon = payload["stops"][0]["lon"]
+    combined_stop.departures = [
+        departure
+        for child_stop in stops_by_id.values()
+        for departure in child_stop.departures
+    ]
+    combined_stop.departures.sort(
+        key = lambda departure: departure.realtime or departure.scheduled
+    )
+
+    return combined_stop, query_time
 
 def main():
     """Main..."""

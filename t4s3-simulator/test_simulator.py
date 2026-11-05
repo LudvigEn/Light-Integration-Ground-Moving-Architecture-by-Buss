@@ -2,16 +2,21 @@
 import argparse
 import ast
 import hashlib
+from io import BytesIO
 import json
 from pathlib import Path
 import tempfile
+import tkinter as tk
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from fat_image import FatImage
-from simulator import Simulator, Network, DEFAULT_IMAGE, runtime
+from PIL import Image
+
+from fat_image import FatImage, TruncatedImageError
+from simulator import Simulator, Network, DEFAULT_IMAGE, runtime, extract_image
 import lvgl_sim as lv
+import fs_driver_sim
 
 IMAGE = DEFAULT_IMAGE
 
@@ -176,7 +181,8 @@ class WidgetTests(unittest.TestCase):
         tree = ast.parse(source.read_text(encoding='utf-8'))
         application = next(node for node in tree.body
                            if isinstance(node, ast.ClassDef) and node.name == 'Application')
-        namespace = {'lv': lv, 'log': lambda message: None}
+        namespace = {'lv': lv, 'log': lambda message: None,
+                     'time': SimpleNamespace(ticks_ms=lambda: 0, ticks_diff=lambda a, b: a - b)}
         exec(compile(ast.Module(body=[application], type_ignores=[]), str(source), 'exec'), namespace)
         app = namespace['Application'].__new__(namespace['Application'])
         app.tileview = lv.tileview(lv.screen_active())
@@ -185,7 +191,13 @@ class WidgetTests(unittest.TestCase):
         app.controls = []
         app.dep_scr = app.tileview.add_tile(2, 0, lv.DIR.LEFT)
         app.dark_mode = True
-        route = SimpleNamespace(designation='1', direction='Lyckeby', destination='Centrum')
+        app.font_16, app.font_28 = lv.font_montserrat_16, lv.font_montserrat_28
+        app.icon_font_32 = lv.binfont_create_from_buffer(
+            (source.parent / 'fonts' / 'transit_icons_32.bin').read_bytes())
+        app.default_transport_type = 'BUS'
+        app.refresh_started = 0
+        route = SimpleNamespace(designation='1', direction='Lyckeby', destination='Centrum',
+                                transport_type='BUS')
         departure = SimpleNamespace(route=route, realtime=None,
                                     scheduled='2026-09-18T16:44:40', delay=0, canceled=False)
         updated = SimpleNamespace(route=route, realtime='2026-09-18T17:05:00',
@@ -195,7 +207,7 @@ class WidgetTests(unittest.TestCase):
             app.clear_departures()
             app.create_departure_screen(stop)
             self.assertEqual(app.dep_scr.children[0].get_text(), stop.name)
-            rows = app.dep_scr.children[1:]
+            rows = [child for child in app.dep_scr.children if child.children]
             self.assertEqual(len(rows), 3)  # Heading plus two departures.
             texts = [[cell.children[0].children[0].get_text() for cell in row.children]
                      for row in rows]
@@ -319,6 +331,36 @@ class WidgetTests(unittest.TestCase):
         self.app.refresh()
         self.assertFalse(any(hit[-1] is control for hit in self.app.hits))
 
+    def test_extended_click_area_on_controls_stays_inside_parent(self):
+        parent = lv.obj(self.tile)
+        parent.set_pos(100, 100)
+        parent.set_size(80, 60)
+        control = lv.button(parent)
+        control.set_pos(5, 5)
+        control.set_size(30, 20)
+        control.set_ext_click_area(20)
+        clicked = Mock()
+        control.add_event_cb(clicked, lv.EVENT.CLICKED, None)
+        self.app.refresh()
+        hit = next(hit for hit in self.app.hits if hit[-1] is control)
+        self.assertEqual(hit[:4], (100, 100, 155, 145))
+        touch = SimpleNamespace(x=145, y=135)
+        self.app.down(touch)
+        self.app.up(touch)
+        clicked.assert_called_once()
+        # The extended region cannot escape its parent.
+        touch = SimpleNamespace(x=95, y=110)
+        self.app.down(touch)
+        self.app.up(touch)
+        clicked.assert_called_once()
+        # A new setting replaces the old extension and follows scrolling.
+        control.set_ext_click_area(5)
+        self.overflow()
+        self.tile.scroll_to_y(110)
+        self.app.refresh()
+        hit = next(hit for hit in self.app.hits if hit[-1] is control)
+        self.assertEqual(hit[:4], (100, 0, 140, 20))
+
     def test_vertical_tile_navigation_when_content_fits(self):
         self.tile.directions |= lv.DIR.BOTTOM
         self.view.add_tile(0, 1, lv.DIR.TOP)
@@ -331,11 +373,370 @@ class WidgetTests(unittest.TestCase):
         with patch('simulator.filedialog.askopenfilename', return_value='') as choose:
             self.app.choose()
         self.assertEqual(choose.call_args.kwargs['initialdir'], str(DEFAULT_IMAGE.parent))
-        self.assertEqual(choose.call_args.kwargs['initialfile'], 't4s3-vfs-deploy.img')
+        self.assertEqual(choose.call_args.kwargs['initialfile'], 't4s3-vfs.img')
         self.app.restart.assert_not_called()
 
 
+class ImageTests(unittest.TestCase):
+    """Real Tk PNG decoding, device paths, theme changes, and vertical swipes."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.window = tk.Tk()
+        self.window.withdraw()
+        self.addCleanup(self.window.destroy)
+        self.canvas = tk.Canvas(self.window, width=600, height=450)
+        lv.setup(self.canvas)
+        self.view = lv.tileview(lv.screen_active())
+        self.view.set_size(600, 450)
+        self.settings = self.view.add_tile(1, 0, lv.DIR.BOTTOM)
+        self.qr_tile = self.view.add_tile(1, 1, lv.DIR.TOP)
+        self.view.set_tile(self.settings)
+        assets = self.root / 'assets'
+        assets.mkdir()
+        for name, background, foreground in [
+            ('QR_Black_On_White.png', 'white', 'black'),
+            ('QR_White_On_Black.png', 'black', 'white'),
+        ]:
+            photo = tk.PhotoImage(master=self.canvas, width=4, height=4)
+            photo.put(background, to=(0, 0, 4, 4))
+            photo.put(foreground, to=(1, 1, 3, 3))
+            photo.write(str(assets / name), format='png')
+        transparent = Image.new('RGBA', (4, 4), (0, 0, 0, 0))
+        transparent.paste((0, 0, 0, 255), (1, 1, 3, 3))
+        transparent.save(assets / 'transparent.png')
+        self.fs_context = lv.filesystem(self.root)
+        self.fs_context.__enter__()
+        self.addCleanup(self.fs_context.__exit__, None, None, None)
+        self.driver = lv.fs_drv_t()
+        fs_driver_sim.fs_register(self.driver, 'S')
+
+    def test_png_rendering_theme_switch_and_vertical_swipes(self):
+        qr = lv.image(self.qr_tile)
+        qr.center()
+        qr.set_src('S:/assets/transparent.png')
+        switch = lv.switch(self.settings)
+        switch.set_pos(250, 200)
+        switch.add_state(lv.STATE.CHECKED)
+
+        def apply_theme(_event=None):
+            dark = switch.has_state(lv.STATE.CHECKED)
+            self.qr_tile.set_style_bg_color('#000000' if dark else '#ffffff', 0)
+            qr.set_style_image_recolor('#ffffff' if dark else '#000000', 0)
+            qr.set_style_image_recolor_opa(lv.OPA.COVER, 0)
+
+        switch.add_event_cb(apply_theme, lv.EVENT.VALUE_CHANGED, None)
+        apply_theme()
+        self.assertEqual(qr._photo.get(1, 1), (255, 255, 255))
+        self.assertTrue(qr._photo.transparency_get(0, 0))
+        self.assertFalse(qr._photo.transparency_get(1, 1))
+        self.assertEqual((qr.width, qr.height), (4, 4))
+
+        simulator = Simulator.__new__(Simulator)
+        simulator.canvas = self.canvas
+        simulator.invoke = lambda action: (action(), simulator.refresh())
+        simulator.refresh()
+        simulator.down(SimpleNamespace(x=300, y=350))
+        simulator.up(SimpleNamespace(x=300, y=100))
+        self.assertIs(self.view.get_tile_active(), self.qr_tile)
+        images = [item for item in self.canvas.find_all() if self.canvas.type(item) == 'image']
+        self.assertEqual(len(images), 1)
+        self.assertEqual(self.canvas.coords(images[0]), [298, 223])
+        self.assertEqual(self.canvas.itemcget(images[0], 'image'), str(qr._photo))
+        self.assertEqual(qr.get_src(), 'S:/assets/transparent.png')
+
+        simulator.down(SimpleNamespace(x=300, y=100))
+        simulator.up(SimpleNamespace(x=300, y=350))
+        self.assertIs(self.view.get_tile_active(), self.settings)
+        self.assertFalse(any(self.canvas.type(item) == 'image' for item in self.canvas.find_all()))
+        simulator.down(SimpleNamespace(x=275, y=215))
+        simulator.up(SimpleNamespace(x=275, y=215))
+        self.assertEqual(qr.get_src(), 'S:/assets/transparent.png')
+        self.assertEqual(qr._photo.get(1, 1), (0, 0, 0))
+        self.assertTrue(qr._photo.transparency_get(0, 0))
+        simulator.move(0, 1)
+        self.assertIs(self.view.get_tile_active(), self.qr_tile)
+        self.assertTrue(any(self.canvas.type(item) == 'image' for item in self.canvas.find_all()))
+
+    def test_clickable_labels_open_qr_and_return_using_visible_text_bounds(self):
+        legal = lv.label(self.settings)
+        legal.set_text('Tap for Trafiklab ToS')
+        legal.set_pos(200, 400)
+        legal.add_flag(lv.obj.FLAG.CLICKABLE)
+        legal.add_event_cb(lambda event: self.view.set_tile(self.qr_tile, lv.ANIM.OFF),
+                           lv.EVENT.CLICKED, None)
+        back = lv.label(self.qr_tile)
+        back.set_text('Back')
+        back.center()
+        back.add_flag(lv.obj.FLAG.CLICKABLE)
+        back.add_event_cb(lambda event: self.view.set_tile(self.settings, lv.ANIM.OFF),
+                          lv.EVENT.CLICKED, None)
+        simulator = Simulator.__new__(Simulator)
+        simulator.canvas = self.canvas
+        simulator.invoke = lambda action: (action(), simulator.refresh())
+        simulator.refresh()
+        text = next(item for item in self.canvas.find_all()
+                    if self.canvas.type(item) == 'text'
+                    and self.canvas.itemcget(item, 'text') == legal.get_text())
+        x1, y1, x2, y2 = self.canvas.bbox(text)
+        # The visible link extends beyond the simulator's default label width.
+        self.assertGreater(x2 - 2, legal.x + legal.width)
+        touch = SimpleNamespace(x=x2 - 2, y=(y1 + y2) / 2)
+        simulator.down(touch)
+        simulator.up(touch)
+        self.assertIs(self.view.get_tile_active(), self.qr_tile)
+        # Centered text extends left of its anchor; that side must work too.
+        text = next(item for item in self.canvas.find_all()
+                    if self.canvas.type(item) == 'text'
+                    and self.canvas.itemcget(item, 'text') == 'Back')
+        x1, y1, x2, y2 = self.canvas.bbox(text)
+        touch = SimpleNamespace(x=x1 + 2, y=(y1 + y2) / 2)
+        simulator.down(touch)
+        simulator.up(touch)
+        self.assertIs(self.view.get_tile_active(), self.settings)
+
+    def test_label_click_respects_flags_disabled_state_and_dragging(self):
+        control = lv.button(self.settings)
+        control.set_pos(75, 260)
+        control.set_size(200, 50)
+        clicked = Mock()
+        control.add_event_cb(clicked, lv.EVENT.CLICKED, None)
+        caption = lv.label(control)
+        caption.set_text('SAVE')
+        caption.center()
+        label_clicked = Mock()
+        caption.add_event_cb(label_clicked, lv.EVENT.CLICKED, None)
+        simulator = Simulator.__new__(Simulator)
+        simulator.canvas = self.canvas
+        simulator.invoke = lambda action: (action(), simulator.refresh())
+        touch = SimpleNamespace(x=175, y=285)
+        simulator.refresh()
+        simulator.down(touch)
+        simulator.up(touch)
+        clicked.assert_called_once()
+        label_clicked.assert_not_called()
+        caption.add_flag(lv.obj.FLAG.CLICKABLE)
+        simulator.refresh()
+        simulator.down(touch)
+        simulator.up(touch)
+        label_clicked.assert_called_once()
+        caption.add_state(lv.STATE.DISABLED)
+        simulator.down(touch)
+        simulator.up(touch)
+        label_clicked.assert_called_once()
+        caption.remove_state(lv.STATE.DISABLED)
+        simulator.down(touch)
+        simulator.up(SimpleNamespace(x=185, y=285))
+        label_clicked.assert_called_once()
+        caption.add_flag(lv.obj.FLAG.HIDDEN)
+        simulator.refresh()
+        self.assertFalse(any(hit[-1] is caption for hit in simulator.hits))
+
+    def test_extended_label_click_area_without_changing_visible_text(self):
+        legal = lv.label(self.settings)
+        legal.set_text('Trafiklab ToS')
+        legal.set_pos(200, 400)
+        legal.add_flag(lv.obj.FLAG.CLICKABLE)
+        clicked = Mock()
+        legal.add_event_cb(clicked, lv.EVENT.CLICKED, None)
+        simulator = Simulator.__new__(Simulator)
+        simulator.canvas = self.canvas
+        simulator.invoke = lambda action: (action(), simulator.refresh())
+        simulator.refresh()
+        original = next(hit[:4] for hit in simulator.hits if hit[-1] is legal)
+        left, top, right, bottom = original
+        touch = SimpleNamespace(x=left - 10, y=(top + bottom) / 2)
+        simulator.down(touch)
+        simulator.up(touch)
+        clicked.assert_not_called()
+
+        legal.set_ext_click_area(20)
+        simulator.refresh()
+        hit = next(hit for hit in simulator.hits if hit[-1] is legal)
+        self.assertEqual(hit[:4], (left - 20, top - 20, right + 20, bottom + 20))
+        text = next(item for item in self.canvas.find_all()
+                    if self.canvas.type(item) == 'text')
+        self.assertEqual(self.canvas.bbox(text), original)
+        simulator.down(touch)
+        simulator.up(touch)
+        clicked.assert_called_once()
+
+        legal.add_state(lv.STATE.DISABLED)
+        simulator.down(touch)
+        simulator.up(touch)
+        clicked.assert_called_once()
+        legal.remove_state(lv.STATE.DISABLED)
+        simulator.down(touch)
+        simulator.up(SimpleNamespace(x=touch.x + 10, y=touch.y))
+        clicked.assert_called_once()
+        legal.remove_flag(lv.obj.FLAG.CLICKABLE)
+        simulator.refresh()
+        self.assertFalse(any(hit[-1] is legal for hit in simulator.hits))
+        legal.add_flag(lv.obj.FLAG.CLICKABLE)
+        legal.set_ext_click_area(0)
+        simulator.refresh()
+        self.assertEqual(next(hit[:4] for hit in simulator.hits if hit[-1] is legal), original)
+
+    def test_recolor_opacity_preserves_original_pixels_and_alpha(self):
+        source = Image.new('RGBA', (3, 1))
+        source.putdata([(20, 40, 60, 255), (100, 80, 60, 128), (0, 0, 0, 0)])
+        source.save(self.root / 'assets' / 'alpha.png')
+        qr = lv.image(self.qr_tile)
+        # Styles can be set before loading a source.
+        qr.set_style_image_recolor('#c86432', 0)
+        qr.set_style_image_recolor_opa(128, 0)
+        qr.set_src('S:/assets/alpha.png')
+        png = self.canvas.tk.call(str(qr._photo), 'data', '-format', 'png')
+        rendered = Image.open(BytesIO(png))
+        self.assertEqual(rendered.convert('RGBA').getchannel('A').tobytes(),
+                         source.getchannel('A').tobytes())
+        self.assertEqual(qr._photo.get(0, 0), (110, 70, 54))
+        self.assertTrue(qr._photo.transparency_get(2, 0))
+        qr.set_style_image_recolor_opa(lv.OPA.TRANSP, 0)
+        self.assertEqual(qr._photo.get(0, 0), (20, 40, 60))
+        qr.set_style_image_recolor_opa(lv.OPA.COVER, 0)
+        self.assertEqual(qr._photo.get(0, 0), (200, 100, 50))
+        photo = qr._photo
+        qr.set_style_image_recolor('#c86432', 0)
+        qr.set_style_image_recolor_opa(lv.OPA.COVER, 0)
+        self.assertIs(qr._photo, photo)
+        qr.set_src(None)
+        qr.set_src('S:/assets/alpha.png')
+        self.assertEqual(qr._photo.get(0, 0), (200, 100, 50))
+        # Recoloring tints opaque backgrounds too; it is not color inversion.
+        qr.set_src('S:/assets/QR_Black_On_White.png')
+        self.assertEqual(qr._photo.get(0, 0), (200, 100, 50))
+        self.assertFalse(qr._photo.transparency_get(0, 0))
+
+    def test_project_transparent_qr_recolors_in_both_themes(self):
+        project = Path(__file__).resolve().parents[1] / 'project'
+        with lv.filesystem(project):
+            fs_driver_sim.fs_register(lv.fs_drv_t(), 'S')
+            qr = lv.image(self.qr_tile)
+            qr.set_src('S:/assets/QR_Black_On_White.png')
+            alpha = qr._pixels.getchannel('A').tobytes()
+            self.assertIn(0, alpha)
+            self.assertIn(255, alpha)
+            module = next((x, y) for y in range(qr.height) for x in range(qr.width)
+                          if qr._pixels.getpixel((x, y))[3] == 255)
+            for color, rgb in [('#ffffff', (255, 255, 255)), ('#000000', (0, 0, 0))]:
+                qr.set_style_image_recolor(color, 0)
+                qr.set_style_image_recolor_opa(lv.OPA.COVER, 0)
+                self.assertEqual(qr._photo.get(*module), rgb)
+                self.assertTrue(qr._photo.transparency_get(0, 0))
+                self.assertEqual(qr._pixels.getchannel('A').tobytes(), alpha)
+
+    def test_source_cache_clearing_and_native_size(self):
+        qr = lv.image(self.qr_tile)
+        qr.set_src('S:assets/QR_Black_On_White.png')
+        photo = qr._photo
+        qr.set_src(qr.get_src())
+        self.assertIs(qr._photo, photo)
+        self.assertEqual((qr.width, qr.height), (4, 4))
+        qr.set_src(None)
+        self.assertIsNone(qr.get_src())
+        self.assertIsNone(qr._photo)
+        self.assertEqual((qr.width, qr.height), (0, 0))
+        qr.set_src('S:/assets/QR_White_On_Black.png')
+        qr.delete()
+        self.assertIsNone(qr._photo)
+        self.assertNotIn(qr, self.qr_tile.children)
+
+    def test_project_qr_pngs_decode_at_native_size(self):
+        project = Path(__file__).resolve().parents[1] / 'project'
+        with lv.filesystem(project):
+            fs_driver_sim.fs_register(lv.fs_drv_t(), 'S')
+            qr = lv.image(self.qr_tile)
+            qr.center()
+            self.view.set_tile(self.qr_tile)
+            files = sorted((project / 'assets').glob('QR_*.png'))
+            self.assertTrue(files, 'No project QR images found')
+            for path in files:
+                qr.set_src('S:/assets/' + path.name)
+                self.assertGreater(qr.width, 0)
+                self.assertGreater(qr.height, 0)
+                lv.render()
+                items = [item for item in self.canvas.find_all() if self.canvas.type(item) == 'image']
+                self.assertEqual(len(items), 1)
+                self.assertEqual(self.canvas.coords(items[0]),
+                                 [(600 - qr.width) / 2, (450 - qr.height) / 2])
+
+    def test_invalid_drive_missing_file_and_vfs_escape(self):
+        qr = lv.image(self.qr_tile)
+        with self.assertRaisesRegex(ValueError, 'not registered'):
+            qr.set_src('Z:/assets/qr.png')
+        with self.assertRaisesRegex(ValueError, 'registered LVGL drive'):
+            qr.set_src('/assets/qr.png')
+        with self.assertRaisesRegex(FileNotFoundError, 'missing from the filesystem image'):
+            qr.set_src('S:/assets/missing.png')
+        with self.assertRaisesRegex(ValueError, 'outside the simulated filesystem'):
+            qr.set_src('S:/../outside.png')
+        with self.assertRaises(ValueError):
+            fs_driver_sim.fs_register(lv.fs_drv_t(), 'LONG')
+
+    def test_fs_driver_import_and_registration_are_isolated(self):
+        import sys
+        previous = sys.modules.get('fs_driver')
+        with tempfile.TemporaryDirectory() as other:
+            with runtime(Path(other), Network(True)):
+                import fs_driver
+                self.assertIs(fs_driver, fs_driver_sim)
+                with self.assertRaisesRegex(ValueError, 'not registered'):
+                    lv.image_path('S:/assets/QR_Black_On_White.png')
+                fs_driver.fs_register(lv.fs_drv_t(), 'S')
+                with self.assertRaises(FileNotFoundError):
+                    lv.image_path('S:/assets/QR_Black_On_White.png')
+            self.assertIs(sys.modules.get('fs_driver'), previous)
+            self.assertEqual(lv.image_path('S:/assets/QR_Black_On_White.png'),
+                             self.root / 'assets' / 'QR_Black_On_White.png')
+
+
 class SimulatorTests(unittest.TestCase):
+    def test_truncated_deployment_uses_matching_full_image(self):
+        original = Path(IMAGE).read_bytes()
+        # A valid filesystem header with the remainder cut off must not cause
+        # the simulator to fabricate the missing data or ignore allocated files.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            trimmed = root / 't4s3-vfs-deploy.img'
+            full = root / 't4s3-vfs.img'
+            trimmed.write_bytes(original[:512])
+            full.write_bytes(original)
+            with self.assertRaises(TruncatedImageError):
+                FatImage(trimmed).files()
+            destination = root / 'extracted'
+            self.assertEqual(extract_image(trimmed, destination), full)
+            self.assertEqual((destination / 'main.py').read_bytes(), FatImage(full).files()['main.py'])
+            self.assertEqual(trimmed.read_bytes(), original[:512])
+
+    def test_truncated_image_without_matching_full_image_still_fails(self):
+        original = Path(IMAGE).read_bytes()
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            trimmed = root / 't4s3-vfs-deploy.img'
+            trimmed.write_bytes(original[:512])
+            with self.assertRaises(TruncatedImageError):
+                extract_image(trimmed, root / 'extracted')
+            different = bytearray(original)
+            different[3] ^= 1  # Change the OEM identifier, leaving FAT geometry intact.
+            (root / 't4s3-vfs.img').write_bytes(different)
+            with self.assertRaisesRegex(ValueError, 'different build'):
+                extract_image(trimmed, root / 'extracted')
+            custom = root / 'other.img'
+            custom.write_bytes(original[:512])
+            with self.assertRaises(TruncatedImageError):
+                extract_image(custom, root / 'extracted')
+
+    def test_full_and_deployment_images_share_saved_settings(self):
+        app = Simulator.__new__(Simulator)
+        app.state_dir = Path('test-state')
+        app.source = DEFAULT_IMAGE
+        full_settings = app.settings_path()
+        app.source = DEFAULT_IMAGE.with_name('t4s3-vfs-deploy.img')
+        self.assertEqual(app.settings_path(), full_settings)
+
     def test_image_roundtrip(self):
         files = FatImage(IMAGE).files()
         self.assertIn('main.py', files)
@@ -370,8 +771,9 @@ class SimulatorTests(unittest.TestCase):
             self.assertEqual(target.tileview.active, (1, 0))
             self.assertTrue(target.dark_mode)
             self.assertTrue(target.dark_mode_switch.has_state(lv.STATE.CHECKED))
-            self.assertEqual(target.transport_type_dropdown.get_options(), 'BUS\nTRAIN')
-            self.assertEqual(target.stop_dropdown.get_selected(), 0)
+            self.assertEqual(target.transport_type_dropdown.get_options(), '\n'.join(sorted(target.STOPS)))
+            self.assertEqual(target.stop_dropdown.get_options().splitlines()[target.stop_dropdown.get_selected()],
+                             target.default_stop)
             app.down(SimpleNamespace(x=275, y=215))
             app.up(SimpleNamespace(x=275, y=215))
             self.assertFalse(target.dark_mode)
@@ -419,7 +821,8 @@ class SimulatorTests(unittest.TestCase):
                 self.assertIn('app', app.scope, app.console.get('1.0', 'end'))
                 target = app.scope['app']
                 target.tileview.set_tile(target.settings_screen)
-                app.invoke(lambda: target.stop_dropdown.select(1))
+                stop_index = target.stop_dropdown.get_options().splitlines().index('Karlskrona Centralstation')
+                app.invoke(lambda: target.stop_dropdown.select(stop_index))
                 # Exercise SAVE through its on-screen hit target.
                 app.down(SimpleNamespace(x=100, y=280))
                 app.up(SimpleNamespace(x=100, y=280))
@@ -434,7 +837,7 @@ class SimulatorTests(unittest.TestCase):
                 self.assertIn('app', reopened.scope, reopened.console.get('1.0', 'end'))
                 target = reopened.scope['app']
                 self.assertEqual(target.default_stop, 'Karlskrona Centralstation')
-                self.assertEqual(target.stop_dropdown.get_selected(), 1)
+                self.assertEqual(target.stop_dropdown.get_selected(), stop_index)
                 self.assertEqual((reopened.root / 'settings.txt').read_text(encoding='utf-8'), contents)
             finally:
                 reopened.close()

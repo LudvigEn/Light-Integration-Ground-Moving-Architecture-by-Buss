@@ -57,7 +57,7 @@ jobs:
                   yield test
             loader = unittest.TestLoader()
             suite = loader.discover(
-                  start_dir="project/tests",
+                  start_dir="tests",
                   pattern="*test*.py",
                   top_level_dir=".",
             )

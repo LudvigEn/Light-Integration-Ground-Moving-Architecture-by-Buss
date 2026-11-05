@@ -18,11 +18,30 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 from types import ModuleType
 
-from fat_image import FatImage
+from fat_image import FatImage, TruncatedImageError
+import fs_driver_sim
 import lvgl_sim as lv
 
-DEFAULT_IMAGE = Path(__file__).resolve().parent.parent / 'device-build' / 't4s3-vfs-deploy.img'
+DEFAULT_IMAGE = Path(__file__).resolve().parent.parent / 'device-build' / 't4s3-vfs.img'
+DEPLOY_IMAGE = DEFAULT_IMAGE.with_name('t4s3-vfs-deploy.img')
 DEFAULT_STATE = Path(__file__).resolve().parent / '.state'
+
+
+def extract_image(source, destination):
+    """Use a matching full image when a trimmed deployment image is incomplete."""
+    source = Path(source)
+    try:
+        FatImage(source).extract(destination)
+    except TruncatedImageError as error:
+        full = source.with_name('t4s3-vfs.img')
+        if source.name != 't4s3-vfs-deploy.img' or not full.is_file():
+            raise
+        image = FatImage(full)
+        if not image.data.startswith(source.read_bytes()):
+            raise ValueError('The full t4s3-vfs.img is from a different build; rebuild the application images') from error
+        image.extract(destination)
+        return full
+    return source
 
 
 class Requests(ModuleType):
@@ -99,7 +118,7 @@ def runtime(root, network, local_data=lambda: False):
     original_path = sys.path[:]
     import requests as real_requests
     app_names = {path.stem for path in root.glob('*.py')}
-    module_names = app_names | {'lvgl', 'network', 'board_lvgl', 'utime', 'uos', 'requests'}
+    module_names = app_names | {'lvgl', 'network', 'board_lvgl', 'utime', 'uos', 'requests', 'fs_driver'}
     modules = {name: sys.modules.get(name) for name in module_names}
     for name in app_names:
         sys.modules.pop(name, None)
@@ -111,7 +130,7 @@ def runtime(root, network, local_data=lambda: False):
     requests = Requests(root, network, local_data)
     requests.real_requests = real_requests
     sys.modules.update(lvgl=lv, network=network, board_lvgl=board, utime=time, uos=os,
-                       requests=requests)
+                       requests=requests, fs_driver=fs_driver_sim)
     start = time.monotonic()
     time.ticks_ms = lambda: int((time.monotonic() - start) * 1000) % (1 << 30)
     time.ticks_us = lambda: int((time.monotonic() - start) * 1000000) % (1 << 30)
@@ -133,7 +152,8 @@ def runtime(root, network, local_data=lambda: False):
     os.chdir(root)
     sys.path.insert(0, str(root))
     try:
-        yield
+        with lv.filesystem(root), lv.timer_context():
+            yield
     finally:
         builtins.open, os.listdir = original_open, original_listdir
         os.chdir(original_cwd)
@@ -158,7 +178,8 @@ class Simulator:
     def __init__(self, source=None, offline=False, hidden=False, local_data=False,
                  state_dir=None):
         self.source = (Path(source).resolve() if source else
-                       DEFAULT_IMAGE if DEFAULT_IMAGE.is_file() else None)
+                       DEFAULT_IMAGE if DEFAULT_IMAGE.is_file() else
+                       DEPLOY_IMAGE if DEPLOY_IMAGE.is_file() else None)
         self.window = tk.Tk()
         self.window.title('LilyGO T4-S3 • Python application simulator')
         self.window.resizable(False, False)
@@ -169,6 +190,8 @@ class Simulator:
         self.temp = tempfile.TemporaryDirectory(prefix='t4s3-sim-')
         self.root = Path(self.temp.name)
         self.context = None
+        self._timer_after = None
+        self._closed = False
         self.scope = {}
         self.hits = []
         self.press = (0, 0)
@@ -244,7 +267,12 @@ class Simulator:
         subprocess.Popen(command, cwd=str(Path(__file__).resolve().parent))
 
     def settings_path(self):
-        key = hashlib.sha256(str(self.source).encode('utf-8')).hexdigest()[:20]
+        # Full and trimmed copies represent the same simulated device. Retain
+        # settings saved when the deployment image was the startup default.
+        identity = self.source
+        if identity.name == 't4s3-vfs.img':
+            identity = identity.with_name('t4s3-vfs-deploy.img')
+        key = hashlib.sha256(str(identity).encode('utf-8')).hexdigest()[:20]
         return self.state_dir / key / 'settings.txt'
 
     def save_state(self):
@@ -258,7 +286,10 @@ class Simulator:
         if not self.source:
             return
         try:
-            FatImage(self.source).extract(self.root)
+            selected = self.source
+            self.source = extract_image(selected, self.root)
+            if self.source != selected:
+                self.write('Deployment image is truncated; using matching t4s3-vfs.img.\n')
             saved_settings = self.settings_path()
             if saved_settings.is_file():
                 shutil.copyfile(saved_settings, self.root / 'settings.txt')
@@ -272,9 +303,42 @@ class Simulator:
                     runpy.run_path(str(self.root / 'boot.py'), run_name='__boot__')
                 self.scope = runpy.run_path(str(self.root / 'main.py'), run_name='__main__')
             self.refresh()
+            self._start_timer_pump()
         except Exception:
             self.status.set('Application failed — see console below')
             self.write(traceback.format_exc())
+
+    def _start_timer_pump(self):
+        self._stop_timer_pump()
+        self._timer_after = self.window.after(1, self._pump_timers)
+
+    def _stop_timer_pump(self):
+        if self._timer_after is not None:
+            self.window.after_cancel(self._timer_after)
+            self._timer_after = None
+
+    def _timer_error(self, error):
+        self.status.set('Application timer callback failed — see console below')
+        self.write(''.join(traceback.format_exception(type(error), error, error.__traceback__)))
+
+    def _pump_timers(self):
+        self._timer_after = None
+        if self._closed or self.context is None:
+            return
+        try:
+            with contextlib.redirect_stdout(self), contextlib.redirect_stderr(self):
+                executed = lv._timer_manager.run_due(on_error=self._timer_error)
+            if executed and not self._closed:
+                self.save_state()
+                self.refresh()
+        except Exception as error:
+            self._timer_error(error)
+        finally:
+            if not self._closed and self.context is not None:
+                # Keep observing timers created by touch callbacks, even when
+                # there were none on the previous pass. Idle passes don't draw.
+                delay = max(1, min(50, lv.timer_get_time_until_next()))
+                self._timer_after = self.window.after(delay, self._pump_timers)
 
     def refresh(self):
         self.hits = lv.render()
@@ -348,6 +412,10 @@ class Simulator:
         self.drag_mode = None
 
     def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        self._stop_timer_pump()
         self.save_state()
         if self.context:
             self.context.__exit__(None, None, None)
