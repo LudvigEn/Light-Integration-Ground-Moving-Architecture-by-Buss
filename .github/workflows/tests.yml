@@ -1,0 +1,118 @@
+name: Python tests
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    name: Discover tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.discovery.outputs.matrix}}
+    steps:
+      - name: Download repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Create test credentials
+        shell: python
+        env:
+          TRAFIKLAB_API_KEY: ${{ secrets.TRAFIKLAB_API_KEY }}
+        run: |
+          import os
+          from pathlib import Path
+
+          key = os.environ["TRAFIKLAB_API_KEY"]
+          if not key:
+            raise SystemExit("Missing TRAFIKLAB_API_KEY repository secret")
+
+          Path("project/secrets.py").write_text(
+            "API_KEY = " + repr(key) + "\n",
+            encoding="utf-8",
+          )
+      - name: Discover individual tests
+        id: discovery
+        shell: python
+        run: |
+            import json
+            import os
+            import unittest
+
+            def individual_tests(suite):
+              for test in suite:
+                if isinstance(test, unittest.TestSuite):
+                  yield from individual_tests(test)
+                else:
+                  yield test
+            loader = unittest.TestLoader()
+            suite = loader.discover(
+                  start_dir="project/tests",
+                  pattern="*test*.py",
+                  top_level_dir=".",
+            )
+            if loader.errors:
+              raise SystemExit("\n".join(loader.errors))
+            cases = [
+              {
+                "id": test.id(),
+                "name": test.shortDescription() or test.id(),
+              }
+              for test in individual_tests(suite)
+            ]
+            if not cases:
+              raise SystemExit("No tests discovered")
+            matrix = json.dumps({"include": cases})
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"matrix={matrix}\n")
+  tests:
+    needs: discover
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Download repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Create test credentials
+        shell: python
+        env:
+          TRAFIKLAB_API_KEY: ${{ secrets.TRAFIKLAB_API_KEY }}
+        run: |
+          import os
+          from pathlib import Path
+
+          key = os.environ["TRAFIKLAB_API_KEY"]
+          if not key:
+            raise SystemExit("Missing TRAFIKLAB_API_KEY repository secret")
+
+          Path("project/secrets.py").write_text(
+            "API_KEY = " + repr(key) + "\n",
+            encoding="utf-8",
+          )
+      - name: Run individual test
+        env:
+          TEST_ID: ${{ matrix.id }}
+        run: python -m unittest "$TEST_ID" -v
