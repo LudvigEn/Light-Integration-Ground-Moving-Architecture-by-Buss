@@ -1,7 +1,8 @@
 # T4-S3 desktop simulator
 
 Run `Launch.cmd`, or run `python simulator.py` using a Python environment with
-Tkinter and the dependencies imported by your application (currently `requests`).
+Tkinter, Pillow (for image recoloring), and the dependencies imported by your
+application (currently `requests`).
 
 Install dependencies with `python -m pip install -r requirements.txt` from this
 directory, using the Python runtime that launches the simulator. `Launch.cmd`
@@ -11,15 +12,20 @@ prefers the bundled Codex runtime when present:
 & "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" -m pip install -r requirements.txt
 ```
 
-The simulator automatically opens `../device-build/t4s3-vfs-deploy.img` when it
-exists. The Open image dialog defaults to that directory and filename too.
+The simulator automatically opens `../device-build/t4s3-vfs.img` when it
+exists, falling back to `t4s3-vfs-deploy.img` if only that file is available.
+The Open image dialog defaults to the full image's directory and filename.
 An image passed on the command line overrides the startup default. Paths for
 the default image are resolved relative to the simulator, not the terminal's
 working directory.
 
 After changing files under `project/`, rebuild with PlatformIO's **Build Python
-application** task and use **Reset / Reload**. If a deployment image becomes too
-small to contain all allocated files, open the full `t4s3-vfs.img` instead.
+application** task and use **Reset / Reload**. If you explicitly open a truncated
+`t4s3-vfs-deploy.img`, the simulator automatically uses the sibling
+`t4s3-vfs.img` when its bytes match the deployment image's prefix. A console
+message explains the substitution. Missing or mismatched full images still
+produce an error; missing file contents are never filled in or ignored.
+Full and trimmed images in the same directory share saved simulator settings.
 
 ## Data and settings
 
@@ -48,6 +54,54 @@ Application modules and MicroPython timing functions are isolated for each run.
 `time.ticks_ms`, `ticks_us`, `ticks_diff`, `ticks_add`, `sleep_ms`, and `sleep_us`
 are available while the application runs, so the project's timing logs work.
 These are desktop execution timings, not ESP32 performance predictions.
+
+## PNG images and the license screen
+
+The simulator supports `lv.image(parent)`, `set_src`, `get_src`, `center`, and
+`align(lv.ALIGN.CENTER, x, y)` for PNG files. It supplies the MicroPython
+`fs_driver` module and `lv.fs_drv_t` registration interface:
+
+```python
+import fs_driver
+
+self.image_fs = lv.fs_drv_t()
+fs_driver.fs_register(self.image_fs, "S")
+self.qr_image = lv.image(self.qr_scr)
+self.qr_image.set_src("S:/assets/QR_Black_On_White.png")
+self.qr_image.center()
+
+# In apply_colors(), after choosing the theme's foreground color:
+self.qr_image.set_style_image_recolor(foreground_color, 0)
+self.qr_image.set_style_image_recolor_opa(lv.OPA.COVER, 0)
+```
+
+`S:/assets/...` and `S:assets/...` resolve inside the extracted filesystem image.
+Place the PNGs in `project/assets/` and rebuild the application image. Files in
+the repository's top-level `assets/` directory are not packaged automatically.
+Missing files and unregistered drive letters produce explicit console errors.
+Drive registrations are isolated between simulated runs.
+
+The transparent `QR_Black_On_White.png` can serve both themes: recolor its modules
+black in light mode and white in dark mode. Transparent pixels stay transparent,
+revealing the tile's background. Recoloring an opaque image also tints its
+background, so use the transparent asset for this approach. The default recolor
+opacity is `lv.OPA.TRANSP` (original colors); `lv.OPA.COVER` fully replaces colors,
+and values from 0 to 255 blend toward the selected color without changing alpha.
+Only the default selector (`0` / `lv.PART.MAIN`) is supported.
+
+Reusing the same source and recolor styles keeps the rendered Tk image; changing
+the source or styles updates it. `set_src(None)` clears the image while retaining
+its styles for the next source. Switching between separate PNGs still works.
+
+PNG images display at their native dimensions, with no implicit resizing.
+Resize the source PNGs before packaging if they do not fit the screen.
+Only file-backed images are supported; LVGL image descriptors, transformations,
+and custom decoder/filesystem callbacks are not emulated.
+
+A license tile at `(1, 1)` with `lv.DIR.TOP` can be reached from Settings at
+`(1, 0)` when Settings allows `lv.DIR.BOTTOM`. Swipe upward to enter the lower
+tile and downward to return, or use the Down/Up arrow keys. Use the LVGL names
+`TOP` and `BOTTOM`; `UP` and `DOWN` are not direction constants.
 
 ## Controls
 
@@ -119,6 +173,14 @@ check uses a hidden Tk window and the default application image. Pass another
 image path as an argument to override it. Integration checks automatically use
 local test data and temporary settings storage; they do not call the live API
 or modify your saved simulator settings.
+
+Image checks use real Tk PNG decoding and rendering, including the QR assets,
+theme switching, vertical navigation, missing-file errors, and filesystem
+registration cleanup. Run `python -m unittest test_simulator.ImageTests -v`
+to check these without needing a built application image. If image integration
+checks still report old application errors such as `lv.DIR.DOWN`, rebuild the
+application image: the simulator deliberately executes the image's code rather
+than silently substituting files from `project/`.
 
 Run `python -m unittest test_simulator.WidgetTests -v` for widget and gesture
 checks that do not need a window or an application image.
