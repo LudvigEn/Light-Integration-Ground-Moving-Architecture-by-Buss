@@ -68,7 +68,12 @@ def parse_data(payload):
     """Takes indata from API-call,
     then divides them up into Route[Stop[Departures]]
     """
-
+    # transport_icons = {
+    #     "BUS": "S:/assets/bus.png",
+    #     "BOAT": "S:/assets/boat.png",
+    #     "TRAIN": "S:/assets/train.png"
+    # }
+    query_time = payload["timestamp"]
     stops_by_id = {}
     if not payload["stops"]:
         return None
@@ -115,7 +120,7 @@ def parse_data(payload):
         key = lambda departure: departure.realtime or departure.scheduled
     )
 
-    return combined_stop
+    return combined_stop, query_time
 
 def main():
     """Main..."""
