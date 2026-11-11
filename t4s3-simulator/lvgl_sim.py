@@ -1,5 +1,11 @@
 """Explicit, small LVGL compatibility layer rendered by Tk, not native LVGL."""
+from contextlib import contextmanager
+from io import BytesIO
+from pathlib import Path
+import tkinter as tk
 from types import SimpleNamespace
+
+from PIL import Image
 
 OPA = SimpleNamespace(COVER=255, TRANSP=0)
 DIR = SimpleNamespace(NONE=0, LEFT=1, RIGHT=2, TOP=4, BOTTOM=8, HOR=3, VER=12, ALL=15)
@@ -18,6 +24,53 @@ font_montserrat_20 = BuiltinFont(20)
 font_montserrat_16 = BuiltinFont(16)
 _screen = None
 _canvas = None
+_filesystem_root = None
+_filesystem_drivers = {}
+
+
+@contextmanager
+def filesystem(root):
+    """Keep LVGL drive registrations local to one simulated device run."""
+    global _filesystem_root, _filesystem_drivers
+    previous_root, previous_drivers = _filesystem_root, _filesystem_drivers
+    _filesystem_root, _filesystem_drivers = Path(root).resolve(), {}
+    try:
+        yield
+    finally:
+        _filesystem_root, _filesystem_drivers = previous_root, previous_drivers
+
+
+class fs_drv_t:
+    """Registration information for a drive backed by the simulated VFS."""
+
+    def __init__(self):
+        self.init()
+
+    def init(self):
+        self.letter = 0
+        self.cache_size = 0
+
+    def register(self):
+        letter = chr(self.letter)
+        if not letter.isascii() or not letter.isalpha():
+            raise ValueError('LVGL filesystem drive must be one ASCII letter')
+        self.root = _filesystem_root or Path.cwd().resolve()
+        _filesystem_drivers[letter] = self
+
+
+def image_path(source):
+    """Resolve an LVGL filename such as S:/assets/qr.png inside its VFS."""
+    if not isinstance(source, str) or len(source) < 2 or source[1] != ':':
+        raise ValueError('Image sources must use a registered LVGL drive, e.g. S:/assets/qr.png')
+    driver = _filesystem_drivers.get(source[0])
+    if driver is None:
+        raise ValueError(f'LVGL filesystem drive {source[0]} is not registered')
+    path = (driver.root / source[2:].lstrip('/\\')).resolve()
+    if not path.is_relative_to(driver.root):
+        raise ValueError('Image source is outside the simulated filesystem')
+    if not path.is_file():
+        raise FileNotFoundError(f'Image is missing from the filesystem image: {source}')
+    return path
 
 
 def color_hex(value):
@@ -232,6 +285,77 @@ class label(obj):
         return self.text
 
 
+class image(obj):
+    """A native-size PNG with LVGL recoloring that preserves its alpha mask."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.set_size(0, 0)
+        self.remove_flag(self.FLAG.SCROLLABLE)
+        self._source = None
+        self._photo = None
+        self._pixels = None
+        self._recolor = (0, 0, 0)
+        self._recolor_opa = OPA.TRANSP
+        self._rendered_style = None
+
+    def set_src(self, source):
+        if source is None:
+            self._source = self._photo = self._pixels = None
+            self._rendered_style = None
+            self.set_size(0, 0)
+            return
+        if source == self._source and self._photo is not None:
+            return
+        path = image_path(source)
+        with Image.open(path, formats=['PNG']) as loaded:
+            pixels = loaded.convert('RGBA')
+        self._source, self._pixels = source, pixels
+        self._rendered_style = None
+        self.set_size(*pixels.size)
+        self._update_photo()
+
+    def set_style_image_recolor(self, color, selector):
+        if selector != PART.MAIN:
+            raise NotImplementedError('Only image recoloring on the default selector is supported')
+        # Use Tk's color parser, matching the simulator's other color styles.
+        rgb = tuple(channel // 257 for channel in _canvas.winfo_rgb(color))
+        self._recolor = rgb
+        self._update_photo()
+
+    def set_style_image_recolor_opa(self, opacity, selector):
+        if selector != PART.MAIN:
+            raise NotImplementedError('Only image recoloring on the default selector is supported')
+        if not isinstance(opacity, int) or not 0 <= opacity <= 255:
+            raise ValueError('Image recolor opacity must be an integer from 0 to 255')
+        self._recolor_opa = opacity
+        self._update_photo()
+
+    def _update_photo(self):
+        if self._pixels is None:
+            return
+        style = (self._recolor if self._recolor_opa else None, self._recolor_opa)
+        if style == self._rendered_style:
+            return
+        pixels = self._pixels
+        if self._recolor_opa:
+            tint = Image.new('RGBA', pixels.size, self._recolor)
+            pixels = Image.blend(pixels, tint, self._recolor_opa / 255)
+            pixels.putalpha(self._pixels.getchannel('A'))
+        encoded = BytesIO()
+        pixels.save(encoded, format='PNG')
+        self._photo = tk.PhotoImage(master=_canvas, data=encoded.getvalue(), format='png')
+        self._rendered_style = style
+
+    def get_src(self):
+        return self._source
+
+    def delete(self):
+        super().delete()
+        self._photo = self._pixels = None
+        self._rendered_style = None
+
+
 class button(obj):
     def __init__(self, parent):
         super().__init__(parent)
@@ -415,6 +539,8 @@ def render():
         if node.bg:
             _canvas.create_rectangle(x, y, x + node.width, y + node.height,
                                      fill=node.bg, outline='')
+        if isinstance(node, image) and node._photo is not None:
+            _canvas.create_image(x, y, image=node._photo, anchor='nw')
         if isinstance(node, dropdown):
             _canvas.create_rectangle(x, y, x + node.width, y + node.height,
                                      fill=node.bg or '#eeeeee', outline='#888888')
