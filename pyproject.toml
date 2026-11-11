@@ -7,7 +7,8 @@ disable = [
     "too-many-instance-attributes",
     "wrong-import-order",
     "too-many-locals",
-    "attribute-defined-outside-init"
+    "attribute-defined-outside-init",
+    "wrong-import-position"
 ]
 
 [tool.pylint.format]

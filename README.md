@@ -69,7 +69,11 @@ alone.
 
 # What to add where
 
-Your code belongs in the `/project` folder. The only place you should add, change, or remove things from is the [**/project**](project/main.py) folder. Changing anything else might break the code and cause a lot of headaches for all involved parties.
+Device application code and assets belong in the [**/project**](project/main.py)
+folder, which is copied recursively into the device filesystem image.
+Desktop application tests belong in the top-level `tests/` folder so they
+are not packaged or deployed. Selected board support files are added from
+`support/` separately.
 
 ## How to connect to Wi-Fi
 
