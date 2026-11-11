@@ -10,6 +10,8 @@
 /.vscode/
 
 # Python caches and tooling
+/t4s3-simulator/.venv/
+/t4s3-simulator/.state/
 __pycache__/
 *.py[cod]
 /.cache/

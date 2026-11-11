@@ -4,6 +4,9 @@ import ast
 import hashlib
 from io import BytesIO
 import json
+import os
+import runpy
+import sys
 from pathlib import Path
 import tempfile
 import tkinter as tk
@@ -14,11 +17,81 @@ from unittest.mock import Mock, patch
 from PIL import Image
 
 from fat_image import FatImage, TruncatedImageError
-from simulator import Simulator, Network, DEFAULT_IMAGE, runtime, extract_image
+from simulator import Simulator, Network, DEFAULT_IMAGE, runtime, extract_image, StandardRequests
 import lvgl_sim as lv
 import fs_driver_sim
 
 IMAGE = DEFAULT_IMAGE
+
+
+class RuntimePathTests(unittest.TestCase):
+    def test_host_files_device_paths_and_script_execution(self):
+        with tempfile.TemporaryDirectory() as folder:
+            host = Path(folder)
+            root = host / 'device'
+            root.mkdir()
+            (host / 'resource.txt').write_text('host resource', encoding='utf-8')
+            (root / 'main.py').write_text('answer = 42\n', encoding='utf-8')
+            with runtime(root, Network(True)):
+                with open(host / 'resource.txt', encoding='utf-8') as stream:
+                    self.assertEqual(stream.read(), 'host resource')
+                self.assertIn('main.py', os.listdir(root))
+                self.assertEqual(os.listdir('/'), os.listdir(root))
+                self.assertEqual(runpy.run_path(str(root / 'main.py'))['answer'], 42)
+                with open('/simulator-test-settings.txt', 'w', encoding='utf-8') as stream:
+                    stream.write('device setting')
+                with open(root / 'new-host-path.txt', 'w', encoding='utf-8') as stream:
+                    stream.write('new file')
+            self.assertEqual((root / 'simulator-test-settings.txt').read_text(), 'device setting')
+            self.assertEqual((root / 'new-host-path.txt').read_text(), 'new file')
+
+    def test_existing_posix_host_path_is_not_redirected(self):
+        # Exercise the macOS path shape even when the tests run on Windows.
+        with tempfile.TemporaryDirectory() as folder:
+            with patch('builtins.open') as host_open:
+                with runtime(Path(folder), Network(True)):
+                    with patch('pathlib.Path.exists', return_value=True):
+                        open('/Users/test/host-resource.txt', 'rb')
+            host_open.assert_called_with('/Users/test/host-resource.txt', 'rb')
+
+
+class HttpFallbackTests(unittest.TestCase):
+    def test_runtime_without_requests_supports_local_and_live_data(self):
+        network = Network(True)
+        network.station.active(True)
+        network.station.connect('test')
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'test_data').mkdir()
+            (root / 'test_data' / 'stop_740032188_formatted.json').write_text(
+                '{"stops": []}', encoding='utf-8')
+            with patch.dict(sys.modules, {'requests': None}):
+                with runtime(root, network, local_data=lambda: True):
+                    import requests
+                    self.assertEqual(requests.get('https://example.invalid').json(), {'stops': []})
+                    requests.local_data = lambda: False
+                    response = Mock(code=200)
+                    response.read.return_value = b'{"departures": []}'
+                    with patch('simulator.urlopen', return_value=response) as get:
+                        result = requests.get('https://example.invalid', timeout=10)
+                    self.assertEqual(result.status_code, 200)
+                    self.assertEqual(result.json(), {'departures': []})
+                    self.assertEqual(get.call_args.kwargs['timeout'], 10)
+                    response.close.assert_called_once()
+                    network.online = False
+                    with self.assertRaisesRegex(OSError, 'disconnected'):
+                        requests.get('https://example.invalid')
+                self.assertIsNone(sys.modules.get('requests'))
+
+    def test_http_error_returns_status_and_body(self):
+        from urllib.error import HTTPError
+        error = HTTPError('https://example.invalid', 403, 'Forbidden', {},
+                          BytesIO(b'{"error": "forbidden"}'))
+        with patch('simulator.urlopen', side_effect=error):
+            response = StandardRequests.get('https://example.invalid')
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), {'error': 'forbidden'})
+        self.assertTrue(error.closed)
 
 
 class WidgetTests(unittest.TestCase):

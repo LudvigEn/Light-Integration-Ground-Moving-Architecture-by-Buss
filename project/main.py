@@ -13,12 +13,15 @@ if (
         / "t4s3-simulator"
     )
 
+    command = (
+        ["cmd.exe", "/d", "/c", "Launch.cmd"]
+        if sys.platform == "win32"
+        else ["sh", "Launch.command"]
+    )
+
     raise SystemExit(
-        subprocess.call(
-            ["cmd.exe", "/d", "/c", "Launch.cmd"],
-            cwd=str(simulator_dir),
-        )
-    ) # Runs the simulator on RUN
+        subprocess.call(command, cwd=str(simulator_dir))
+    )  # Runs the simulator on RUN
 import time # Provide timing and delay functions
 
 import lvgl as lv # Import the LVGL graphics library # pylint: disable=import-error
