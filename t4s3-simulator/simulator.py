@@ -221,7 +221,8 @@ class Simulator:
         if hidden:
             self.window.withdraw()
         self.network = Network(not offline)
-        self.state_dir = Path(state_dir) if state_dir is not None else DEFAULT_STATE
+        # Resolve before runtime() changes cwd to the extracted device image.
+        self.state_dir = Path(state_dir).resolve() if state_dir is not None else DEFAULT_STATE
         self.temp = tempfile.TemporaryDirectory(prefix='t4s3-sim-')
         self.root = Path(self.temp.name)
         self.context = None
@@ -315,7 +316,10 @@ class Simulator:
         if self.source and settings.is_file():
             destination = self.settings_path()
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(settings, destination)
+            # Path byte I/O uses io.open rather than the device's patched
+            # builtins.open. A new POSIX host file must not be remapped into
+            # the device image simply because it does not exist yet.
+            destination.write_bytes(settings.read_bytes())
 
     def boot(self):
         if not self.source:

@@ -25,6 +25,27 @@ IMAGE = DEFAULT_IMAGE
 
 
 class RuntimePathTests(unittest.TestCase):
+    def test_save_state_bypasses_device_open_for_new_host_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            app = Simulator.__new__(Simulator)
+            app.root = Path(folder) / 'device'
+            app.root.mkdir()
+            app.source = Path(folder) / 'test.img'
+            app.state_dir = Path(folder) / 'host-state'
+            settings = app.root / 'settings.txt'
+            settings.write_bytes(b'first setting\n')
+            destination = app.settings_path()
+            self.assertFalse(destination.exists())
+            with runtime(app.root, Network(True)):
+                # Host persistence must bypass the device's open wrapper on
+                # every platform, including when the destination is new.
+                with patch('builtins.open', side_effect=AssertionError('device open used')):
+                    app.save_state()
+                    self.assertEqual(destination.read_bytes(), b'first setting\n')
+                    settings.write_bytes(b'updated setting\n')
+                    app.save_state()
+                    self.assertEqual(destination.read_bytes(), b'updated setting\n')
+
     def test_host_files_device_paths_and_script_execution(self):
         with tempfile.TemporaryDirectory() as folder:
             host = Path(folder)
