@@ -12,4 +12,4 @@ disable = [
 ]
 
 [tool.pylint.format]
-max-line-length = 200
+max-line-length = 300

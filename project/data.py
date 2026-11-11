@@ -29,6 +29,12 @@ class Departure:
         self.delay: int = None
         self.canceled: bool = False
         self.route: Route = None
+        self.trip_id: str = None
+
+class Trip:
+    """Data on Trip (basically the route)"""
+    def __init__(self):
+        self.trip_id
 
 class Stop:
     """Data on Stop (Hållplats) -granularity
@@ -102,6 +108,7 @@ def parse_data(payload):
         departure.delay = item["delay"]
         departure.canceled = item["canceled"]
         departure.route = route
+        departure.trip_id = item["trip"]["trip_id"]
 
         stop_id = item["stop"]["id"]
         stops_by_id[stop_id].departures.append(departure)
@@ -122,10 +129,37 @@ def parse_data(payload):
 
     return combined_stop, query_time
 
+def find_journey(stops, start_stop, end_stop):
+    """Finds best route between Stop A and Stop B"""
+    stop_a = next((stop for stop in stops if stop.name == start_stop), None)
+    stop_b = next((stop for stop in stops if stop.name == end_stop), None)
+    if stop_a is None or stop_b is None:
+        return None
+
+    ### On the same route:
+    for departure_a in stop_a.departures: # Loop through all departures from stop A
+        for departure_b in stop_b.departures: # Loop through all departures from stop B
+            if departure_a.canceled or departure_b.canceled: # If either is cancelled
+                continue
+            if departure_a.trip_id == departure_b.trip_id: # If there's a trip_id that matches
+                time_a = departure_a.realtime or departure_a.scheduled
+                time_b = departure_b.realtime or departure_b.scheduled
+                trip_length = (int(time_b[11:13])*3600 # Hour
+                +int(time_b[14:16])*60 # Minute
+                +int(time_b[17:19]))-( # Second
+                int(time_a[11:13])*3600 # Hour
+                +int(time_a[14:16])*60 # Minute
+                +int(time_a[17:19])) # Second
+                return f"""Take route {departure_a.route.designation} towards {departure_a.route.destination} leaving at {time_a[11:19]}. Arrive by {time_b[11:19]}, the trip takes {trip_length} seconds."""
+
+    return None
+
 def main():
     """Main..."""
-    data = read_data("740032188")
-    print(json.dumps(data, default=vars, indent=4, ensure_ascii=False))
+    stop1, _ = read_data("740032188")
+    stop2, _ = read_data("740037242")
+    stops = [stop1, stop2]
+    print(find_journey(stops, "Campus Gräsvik", "Lokstallarna"))
 
 if __name__ == "__main__":
     main()
