@@ -435,7 +435,6 @@ class Application:
                         "TRAIN":{
                             "Bergåsa station": "740001537",
                             "Holmsjö": "740000771",
-                            "Karlskrona central": "740000230",
                             "Karlskrona Centralstation": "740000230",
                             "Kungsplan": "740020510",
                         },
@@ -623,7 +622,6 @@ class Application:
                             "Kallingevägen": "740032072",
                             "Karlsberg": "740031969",
                             "Karlsgärde": "740032092",
-                            "Karlskrona central": "740000230",
                             "Karlskrona Centralstation": "740000230",
                             "Karlskrona centrum": "740023372",
                             "Karlstorp": "740031920",
