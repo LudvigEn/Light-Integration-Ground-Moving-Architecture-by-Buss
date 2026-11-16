@@ -1,0 +1,28 @@
+{
+    "BUS":{
+        "Campus Gräsvik": "740032188",
+        "Karlskrona Centralstation": "740000230",
+        "Bergåsa Station": "740001537",
+        "Lokstallarna": "740037242",
+        "Egilslunden": "740031881",
+        "Järavägen": "740032169",
+        "Angöringen": "740031886",
+        "Tullparken": "740031877"
+    },
+    "TRAIN":{
+        "Karlskrona Centralstation": "740000230",
+        "Bergåsa Station": "740001537"
+    },
+    "FERRY":{
+    },
+    "ALL":{
+        "Campus Gräsvik": "740032188",
+        "Karlskrona Centralstation": "740000230",
+        "Bergåsa Station": "740001537",
+        "Lokstallarna": "740037242",
+        "Egilslunden": "740031881",
+        "Järavägen": "740032169",
+        "Angöringen": "740031886",
+        "Tullparken": "740031877"
+    }
+}

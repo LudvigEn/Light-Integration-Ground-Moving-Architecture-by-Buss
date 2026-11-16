@@ -23,6 +23,7 @@ if (
         subprocess.call(command, cwd=str(simulator_dir))
     )  # Runs the simulator on RUN
 import time # Provide timing and delay functions
+import json # For reading STOPS
 
 import lvgl as lv # Import the LVGL graphics library # pylint: disable=import-error
 import network # Access the boards network interface # pylint: disable=import-error
@@ -59,24 +60,9 @@ class Application:
         self.default_stop = "Campus Gräsvik"
         self.default_transport_type = "BUS"
         self.refresh_started: int = -100000
-        self.STOPS = {
-                        "BUS":{
-                            "Campus Gräsvik": "740032188",
-                            "Karlskrona Centralstation": "740000230",
-                            "Bergåsa Station": "740001537"
-                        },
-                        "TRAIN":{
-                            "Karlskrona Centralstation": "740000230",
-                            "Bergåsa Station": "740001537"
-                        },
-                        "FERRY":{
-                        },
-                        "ALL":{
-                            "Campus Gräsvik": "740032188",
-                            "Karlskrona Centralstation": "740000230",
-                            "Bergåsa Station": "740001537"
-                        }
-                    }
+        module_dir = __file__.replace("\\", "/").rpartition("/")[0] or "."
+        with open(module_dir + "/STOPS.json", "r", encoding="utf-8") as file:
+            self.STOPS = json.load(file)
         self.wifi_name: str = self.connect_wifi() or "Offline"
         self.create_ui() # Function to trigger creation of UI
         log("student application ready")
