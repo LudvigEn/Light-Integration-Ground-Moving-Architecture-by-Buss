@@ -152,7 +152,7 @@ class Application:
 
     def create_title_screen(self):
         """Function: Startup-screen"""
-        self.title_screen = self.tileview.add_tile(0, 0, lv.DIR.RIGHT) # Create a screen on our tileview
+        self.title_screen = self.tileview.add_tile(1, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a screen on our tileview
 
         # Create labels for title-screen
         self.title_screen_label = lv.label(self.title_screen) # Add a label to the Title screen
@@ -378,7 +378,7 @@ class Application:
 
     def create_settings_screen(self):
         """Function: Create a settings screen"""
-        self.settings_screen = self.tileview.add_tile(1, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a screen on our tileview
+        self.settings_screen = self.tileview.add_tile(2, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a screen on our tileview
 
         # SETTINGS HEADER
         settings_header = lv.label(self.settings_screen)
@@ -538,7 +538,7 @@ class Application:
 
     def create_qr_legal_screen(self):
         """Shows a QR-code for the legal-text related to Trfa"""
-        self.qr_scr = self.tileview.add_tile(1, 1, lv.DIR.NONE)
+        self.qr_scr = self.tileview.add_tile(2, 1, lv.DIR.NONE)
         self.backgrounds.append(self.qr_scr)
 
         return_label = lv.label(self.qr_scr)
@@ -556,6 +556,146 @@ class Application:
         self.qr_image = lv.image(self.qr_scr)
         self.qr_image.set_src("S:/assets/QR_Black_On_White.png")
         self.qr_image.center()
+        
+    def create_journey_selection_screen(self):
+            """Function: Create a journey selection screen"""
+            self.journey_screen = self.tileview.add_tile(0, 0, lv.DIR.LEFT | lv.DIR.RIGHT) 
+
+            # JOURNEY HEADER
+            journey_header = lv.label(self.journey_screen)
+            journey_header.set_text("Journey Selection")
+            journey_header.set_style_text_font(self.font_28, 0)
+            journey_header.align(lv.ALIGN.CENTER, 0, -150) # Place the label on the tile
+            self.labels.append(journey_header)
+            
+            
+            """
+            header = lv.label(self.dep_scr) # Add a label to the Departure screen
+            header.set_text(stop.name) # Name of stop as header
+            header.set_width(450) # Set width of label
+            header.set_pos(75, 10) # Fixed position of label
+            header.set_style_text_font(self.font_28, 0) # Set font of the label
+            self.labels.append(header) # Add to list of labels
+            """
+            
+            
+
+            # FROM SELECTOR
+            from_label = lv.label(self.journey_screen)
+            from_label.set_text("From:")
+            from_label.set_pos(75, 150)
+            from_label.set_style_text_font(self.font_28, 0)
+            self.labels.append(from_label)
+    
+            from_dropdown = lv.dropdown(self.journey_screen)
+            from_dropdown.set_pos(200, 150)
+            from_dropdown.set_width(325)
+            from_names = sorted(self.STOPS[self.default_transport_type])
+            from_dropdown.set_options("\n".join(from_names))
+    
+            selected_from = (
+                from_names.index(self.default_stop)
+                if self.default_stop in from_names
+                else 0)
+            
+            from_dropdown.set_selected(selected_from)
+            self.default_to = from_names[selected_from]
+            self.to_dropdown = from_dropdown
+            self.controls.append(from_dropdown)
+            def on_to_changed(_event):
+                """What to do when a different value is selected"""
+                names = from_dropdown.get_options().splitlines()
+                index = from_dropdown.get_selected()
+                if 0 <= index < len(names):
+                    self.default_from = names[index]
+                log(f"Selected: {self.default_from}")
+            from_dropdown.add_event_cb( # This listens to updates to the dropdown
+                on_to_changed, # This is the function it will run.
+                lv.EVENT.VALUE_CHANGED, # When a value is changed
+                None,
+            )
+            
+            # STOP SELECTOR
+            to_label = lv.label(self.journey_screen)
+            to_label.set_text("To:")
+            to_label.set_pos(75, 250)
+            to_label.set_style_text_font(self.font_28, 0)
+            self.labels.append(to_label)
+    
+            to_dropdown = lv.dropdown(self.journey_screen)
+            to_dropdown.set_pos(200, 250)
+            to_dropdown.set_width(325)
+            to_names = sorted(self.STOPS[self.default_transport_type])
+            to_dropdown.set_options("\n".join(to_names))
+    
+            selected_to = (
+                to_names.index(self.default_stop)
+                if self.default_stop in to_names
+                else 0
+            )
+            to_dropdown.set_selected(selected_to)
+            self.default_to = to_names[selected_to]
+            self.to_dropdown = to_dropdown
+            self.controls.append(to_dropdown)
+            def on_to_changed(_event):
+                """What to do when a different value is selected"""
+                names = to_dropdown.get_options().splitlines()
+                index = to_dropdown.get_selected()
+                if 0 <= index < len(names):
+                    self.default_to = names[index]
+                log(f"Selected: {self.default_to}")
+            to_dropdown.add_event_cb( # This listens to updates to the dropdown
+                on_to_changed, # This is the function it will run.
+                lv.EVENT.VALUE_CHANGED, # When a value is changed
+                None,
+            )
+            """
+            for dropdown in (transport_type_dropdown, to_dropdown):
+                dropdown.set_style_text_font(self.font_16, 0)
+                dropdown.get_list().set_style_text_font(self.font_16, 0)
+            
+    
+            # SAVE JOURNEY
+            save_journey_button = lv.button(self.journey_screen)
+            save_journey_button.set_pos(75, 260)
+            save_journey_button.set_size(200, 50)
+            save_journey_button.set_style_border_width(2, 0)
+            self.controls.append(save_journey_button)
+    
+            save_journey_label = lv.label(save_journey_button)
+            save_journey_label.set_text("SAVE")
+            save_journey_label.center()
+            self.labels.append(save_journey_label)
+    
+            save_journey_button.add_event_cb(
+                lambda event: self.save_journey(),
+                lv.EVENT.CLICKED,
+                None,
+            )
+            
+            """
+            # # RESET JOURNEY
+            # reset_journey_button = lv.button(self.journey_screen)
+            # reset_journey_button.set_pos(280, 260)
+            # reset_journey_button.set_size(200, 50)
+            # reset_journey_button.set_style_border_width(2, 0)
+            # self.controls.append(reset_journey_button)
+    
+            # reset_journey_label = lv.label(reset_journey_button)
+            # reset_journey_label.set_text("RESET")
+            # reset_journey_label.center()
+            # self.labels.append(reset_journey_label)
+    
+            # reset_journey_button.add_event_cb(
+            #     self.save_journey(),
+            #     lv.EVENT.CLICKED,
+            #     None,
+            # )
+    
+            #### Add for potential Dark/Light mode
+            self.backgrounds.append(self.journey_screen)
+            log("journey-screen created")
+
 
     def create_ui(self):
         'Function: Creates UI'
@@ -567,7 +707,8 @@ class Application:
         self.create_title_screen() ## Creation of Title-Screen
         self.create_qr_legal_screen() ## Create QR-screen
         self.create_settings_screen() ## Placeholder creation of Settings-screen
-        self.dep_scr = self.tileview.add_tile(2, 0, lv.DIR.LEFT) # Create a placeholder departure screen
+        self.create_journey_selection_screen()
+        self.dep_scr = self.tileview.add_tile(3, 0, lv.DIR.LEFT) # Create a placeholder departure screen
         self.backgrounds.append(self.dep_scr)
 
         self.previous_tile = self.tileview.get_tile_active()
