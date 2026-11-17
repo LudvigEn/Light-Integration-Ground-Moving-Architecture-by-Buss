@@ -558,7 +558,7 @@ class Application:
         self.qr_image.center()
 
     def create_journey_screen(self):
-        self.journey_screen = self.tileview.add_tile(3, 0, lv.DIR.LEFT)
+        self.journey_screen = self.tileview.add_tile(0, 0, lv.DIR.LEFT)
         self.journey_screen_label = lv.label(self.journey_screen)
         self.journey_screen_label.set_text("Reseskärm") 
         self.journey_screen_label.align(lv.ALIGN.TOP_MID, 0, 15)
@@ -575,6 +575,7 @@ class Application:
         self.create_title_screen() ## Creation of Title-Screen
         self.create_qr_legal_screen() ## Create QR-screen
         self.create_settings_screen() ## Placeholder creation of Settings-screen
+        self.create_journey_screen() ## Creates journey screen
         self.dep_scr = self.tileview.add_tile(2, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a placeholder departure screen
         self.backgrounds.append(self.dep_scr)
         self.create_journey_screen() ## Creates journey screen
