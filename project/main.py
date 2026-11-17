@@ -22,6 +22,7 @@ if (
     raise SystemExit(
         subprocess.call(command, cwd=str(simulator_dir))
     )  # Runs the simulator on RUN
+import json
 import time # Provide timing and delay functions
 
 import lvgl as lv # Import the LVGL graphics library # pylint: disable=import-error
@@ -32,11 +33,11 @@ from debug_log import log # Import the applications logging function
 
 from secrets import WIFI_SSID, WIFI_PASSWORD, WIFI_LIST # Load the Wi-Fi network name and password
 
-from data import read_data # Load the data-processing module
+from data import read_data, find_journey # Load the data-processing module
 
 import fs_driver # pylint: disable=import-error
 
-VERSION = 0.4 # Version-control
+VERSION = 0.5 # Version-control
 
 class Application:
     """Class for application"""
@@ -56,821 +57,15 @@ class Application:
         self.borders = [] # List of all borders (like around boxes), for toggling dark-mode
         self.labels = [] # List of all labels, for toggling dark-mode
         self.controls = [] # List of all controls (buttons/dropdowns), for toggling dark-mode
+        self.journey_from: str = None
+        self.journey_to: str = None
+        self.journeys: list = None
         self.default_stop = "Campus Gräsvik"
         self.default_transport_type = "BUS"
         self.refresh_started: int = -100000
-        self.STOPS = {
-                        "BUS":{
-                            "Af Chapmangymnasiet": "740031814",
-                            "Afvelsgärdevägen": "740031811",
-                            "Alamedan": "740031817",
-                            "Allatorp": "740011253",
-                            "Allatorp norra": "740032145",
-                            "Allatorps gård": "740010009",
-                            "Allévägen": "740032109",
-                            "Allsjömåla": "740032026",
-                            "Alnaryd": "740010013",
-                            "Alvarsmåla": "740074579",
-                            "Amiralen": "740031800",
-                            "Amiralitetstorget": "740040917",
-                            "Angöringen": "740031886",
-                            "Ankaret": "740031823",
-                            "Annebergsvägen": "740031943",
-                            "Annebo": "740031796",
-                            "Attanäs": "740031948",
-                            "Augerums kyrka": "740031996",
-                            "AWA vägen": "740031813",
-                            "Backabo": "740031791",
-                            "Bastasjö": "740031801",
-                            "Benabacken": "740032098",
-                            "Berg": "740032069",
-                            "Berget": "740032009",
-                            "Bergtorpsvägen": "740032075",
-                            "Bergåsa centrum": "740031781",
-                            "Bergåsa station": "740001537",
-                            "Bjurabyggetv": "740032082",
-                            "Bjärby": "740032088",
-                            "Bjärbylund": "740032090",
-                            "Björkdalavägen": "740031931",
-                            "Björkedal": "740031907",
-                            "Björkenäs": "740031937",
-                            "Björkenäs kvarn": "740031938",
-                            "Björkeryd": "740032136",
-                            "Bokskogsvägen": "740032096",
-                            "Boråkra": "740032110",
-                            "Bostorp": "740011306",
-                            "Branthalla": "740031958",
-                            "Bredavik": "740031976",
-                            "Bredavik brygga": "740072446",
-                            "Bredäng": "740031939",
-                            "Brofästet": "740032147",
-                            "Bromålavägen": "740032025",
-                            "Bråstorp": "740032068",
-                            "Bråtelycke": "740031918",
-                            "Bränteknuva by": "740032146",
-                            "Bränteknuva vsk": "740032132",
-                            "Brödlösevägen": "740032048",
-                            "Brömsebro": "740000597",
-                            "Bröstorp": "740032067",
-                            "Bubbetorp": "740032010",
-                            "Byasjövägen": "740032070",
-                            "Bygatan Tving": "740051717",
-                            "Campus Gräsvik": "740032188",
-                            "Carlandravägen": "740031812",
-                            "Carlemansvägen": "740031793",
-                            "Chapmansplan": "740031853",
-                            "Dalamad": "740032104",
-                            "Dalby": "740011165",
-                            "Djupasund": "740031987",
-                            "Dragsvik": "740031974",
-                            "Drottninggatan": "740031815",
-                            "Duverum": "740031894",
-                            "E22": "740031908",
-                            "Egilslunden": "740031881",
-                            "Ekeberg": "740031789",
-                            "Ekedalsvägen (1)": "740031834",
-                            "Ekedalsvägen (2)": "740031895",
-                            "Ekekullen": "740032032",
-                            "Ekeryd": "740031911",
-                            "Ekerydsvägen": "740031897",
-                            "Ekholmen": "740031874",
-                            "Eklunda": "740031917",
-                            "Emmeryd": "740032062",
-                            "Enkullen": "740031901",
-                            "Eringsbodavägen": "740032049",
-                            "Fabbemåla vsk": "740032006",
-                            "Falan": "740032080",
-                            "Figgamålaväg": "740032079",
-                            "Fjärdsjömåla": "740010344",
-                            "Flyerydsvägen": "740031913",
-                            "Flyetvägen": "740031941",
-                            "Fridlevstad": "740010377",
-                            "Frändatorp": "740031975",
-                            "Fur": "740010387",
-                            "Furs Sjukhus": "740010387",
-                            "Fågelmara": "740001062",
-                            "Fågelmara gård": "740031921",
-                            "Fågelmara skola": "740023373",
-                            "Färmanstorpsv": "740032107",
-                            "G Torhamns väg": "740031810",
-                            "Ga Riksvägen": "740031835",
-                            "Galgamarkstrappan": "740031888",
-                            "Gillabro": "740032134",
-                            "Giserydsvägen": "740032004",
-                            "Gisslevik": "740031953",
-                            "Granholmen": "740032031",
-                            "Granitvägen (1)": "740032014",
-                            "Granitvägen (2)": "740032100",
-                            "Gröna huset": "740031909",
-                            "Grönadal": "740032105",
-                            "Grönadals brygga": "740074573",
-                            "Gullaberg": "740031828",
-                            "Gullberna": "740072447",
-                            "Gullberna station": "740031863",
-                            "Gullholma": "740031935",
-                            "Gängletorp": "740025942",
-                            "Göksjöholm": "740032023",
-                            "H Martinsons väg": "740031809",
-                            "Hallarna": "740010555",
-                            "Hallarum": "740031961",
-                            "Hallarums backe": "740031960",
-                            "Hallaslättslyckan": "740031959",
-                            "Hammarsvägen": "740031956",
-                            "Hamnvägen": "740031944",
-                            "Handelshamnen": "740020699",
-                            "Harstorp": "740032137",
-                            "Hasslö": "740023345",
-                            "Hasslö Fabian Månssons väg": "740000017",
-                            "Herrgårdsvägen": "740031848",
-                            "Hildehult": "740032029",
-                            "Hjälmserydsv": "740031927",
-                            "Holmsjö": "740000771",
-                            "Horn (Kyrkan)": "740010554",
-                            "Horsarydsvägen": "740031929",
-                            "Hultvägen": "740031868",
-                            "Hålan": "740031977",
-                            "Häcken": "740031910",
-                            "Hälsovägen": "740031832",
-                            "Hässlegårdens förskola": "740031803",
-                            "Hästö": "740031849",
-                            "Hästö idrottsplats": "740031847",
-                            "Högklint": "740032061",
-                            "Hörnsjö": "740073767",
-                            "Höryda": "740032066",
-                            "Hörydavägen": "740032054",
-                            "Idehult": "740032077",
-                            "Intagsvägen": "740031790",
-                            "Johannesberg": "740032060",
-                            "Jämjö centrum": "740000333",
-                            "Jämjö Parkvägen": "740010723",
-                            "Jändelskolan": "740031962",
-                            "Järavägen": "740032169",
-                            "Kallingevägen": "740032072",
-                            "Karlsberg": "740031969",
-                            "Karlsgärde": "740032092",
-                            "Karlskrona Centralstation": "740000230",
-                            "Karlskrona centrum": "740023372",
-                            "Karlstorp": "740031920",
-                            "Kemivägen": "740032059",
-                            "Kestorp": "740010773",
-                            "Killevägen": "740031979",
-                            "Klakebäck": "740031926",
-                            "Klakebäcksvägen": "740031896",
-                            "Knösö": "740031869",
-                            "Knösövägen": "740031833",
-                            "Konungshamn": "740010812",
-                            "Kristanopel vsk": "740059480",
-                            "Kristianopel": "740010826",
-                            "Krokebro": "740031999",
-                            "Kronotorp": "740031794",
-                            "Kuleryd": "740032036",
-                            "Kungastenen": "740031986",
-                            "Kungsmarken A-huset": "740031826",
-                            "Kungsmarken B-huset": "740031825",
-                            "Kungsmarken C-huset": "740031824",
-                            "Kungsmarken centrum": "740031827",
-                            "Kungsplan": "740020510",
-                            "Kvarnagårdsvägen": "740032038",
-                            "Kvarnen": "740000469",
-                            "Kvarngatan": "740031887",
-                            "Kyrkogården": "740031831",
-                            "Kättilsmåla": "740010884",
-                            "Käxelåkra": "740031899",
-                            "Lagmansgatan": "740031880",
-                            "Lallerstedts gata": "740031865",
-                            "Landsvägsgatan": "740031777",
-                            "Ledja": "740010909",
-                            "Lejonbacken": "740031988",
-                            "Lillö": "740032024",
-                            "Lindesnäs": "740031783",
-                            "Lokstallarna": "740037242",
-                            "Lugna Dal": "740032055",
-                            "Lyckeby centrum": "740000663",
-                            "Lyckeby Slottsbacken": "740032193",
-                            "Lyckeåborg": "740010999",
-                            "Långemålavägen": "740032078",
-                            "Långenabben": "740031940",
-                            "Långö": "740031879",
-                            "Lösen": "740031889",
-                            "Marieberg": "740031829",
-                            "Marieberg Tving": "740032073",
-                            "Mariedalsvägen": "740031932",
-                            "Mariefors": "740031997",
-                            "Mariefröjd": "740032002",
-                            "Masten vsk": "740035415",
-                            "Milastensvägen": "740031906",
-                            "Missionshuset": "740032063",
-                            "Mjövikstrandsv": "740011061",
-                            "Mommelycke": "740032135",
-                            "Motellet": "740024915",
-                            "Målatorps vsk": "740032133",
-                            "Måstad": "740032071",
-                            "Möckleryd": "740031954",
-                            "Möcklerydsv": "740031955",
-                            "Möcklö": "740031968",
-                            "Möcklöbron": "740031970",
-                            "Mölletorp": "740011100",
-                            "Mölleåker": "740031998",
-                            "Mörtövägen": "740032018",
-                            "N Attanäs": "740031936",
-                            "N Binga": "740031898",
-                            "N Buggamåla": "740010195",
-                            "N Flymen": "740032027",
-                            "N Orranäs": "740031934",
-                            "NKT Arena Karlskrona": "740032192",
-                            "NKT Verkö": "740031844",
-                            "Norra Hässlegården": "740031802",
-                            "Norra Svensgöl": "740032042",
-                            "Nättraby centrum": "740024966",
-                            "Nättraby E22": "740023351",
-                            "Nättraby hörnet": "740000564",
-                            "Nättraby kyrka": "740025541",
-                            "Nättraby skola": "740011166",
-                            "Nättrabyån": "740032115",
-                            "Nävragöl": "740011168",
-                            "Nävragöl slingan": "740032181",
-                            "Nävrasjö": "740032044",
-                            "Offamåla": "740032076",
-                            "Olofshem": "740031925",
-                            "Olsäng": "740031923",
-                            "Ordensgatan": "740031882",
-                            "Orranäs": "740031947",
-                            "Orranäs gata": "740031928",
-                            "Polhemsgatan": "740031779",
-                            "Pålycke": "740032064",
-                            "Ramdala": "740011210",
-                            "Ringö": "740031837",
-                            "Ringöbron": "740031864",
-                            "Rosenhill": "740031892",
-                            "Rosenholm": "740032108",
-                            "Roslundavägen": "740032099",
-                            "Roxtec Verkö": "740031842",
-                            "Ryd": "740023356",
-                            "Rydsvägen": "740032034",
-                            "Råbacken": "740031994",
-                            "Rödeby centrum": "740000521",
-                            "Rödeby Ek": "740011293",
-                            "Rödebyholm": "740023537",
-                            "Rödebyskolan": "740032013",
-                            "Rörsängsgatan": "740031919",
-                            "S Binga": "740011305",
-                            "S Buggamåla": "740032081",
-                            "S Fjärdsjömåla": "740032028",
-                            "S Fågelmara": "740031914",
-                            "S Svanhalla": "740031946",
-                            "S Svensgöl": "740032030",
-                            "S Sälleryd": "740032007",
-                            "Saleboda vsk": "740032053",
-                            "Saltö": "740031870",
-                            "Saltö torg": "740031871",
-                            "Sanda": "740031984",
-                            "Sandbäcksmåla": "740032001",
-                            "Sandhamn": "740031951",
-                            "Sandhamns ek": "740031950",
-                            "Senoren": "740023402",
-                            "Sibbaboda": "740031942",
-                            "Silleboda": "740032087",
-                            "Sillesåsvägen": "740031912",
-                            "Sillhövda": "740032045",
-                            "Sillhövda kyrka": "740032047",
-                            "Silvervägen": "740031806",
-                            "Sjukhuset huvudentrén": "740024365",
-                            "Skallatorp": "740031981",
-                            "Skearydsvägen": "740031930",
-                            "Skillinge": "740032089",
-                            "Skillingenäs": "740032106",
-                            "Skogsvägen": "740032033",
-                            "Skolhpl": "740032086",
-                            "Skällenäs": "740031973",
-                            "Skällö": "740031972",
-                            "Skärfva by": "740032074",
-                            "Skärva": "740032149",
-                            "Skärvaboda": "740032019",
-                            "Skönstavik": "740032091",
-                            "Smedjetorpsvägen": "740032065",
-                            "Smedvägen": "740031985",
-                            "Sofieberg": "740032050",
-                            "Sofieborgsvägen": "740031933",
-                            "Spandelstorp": "740031808",
-                            "Spandelstorpskolan": "740031807",
-                            "Sparre": "740031816",
-                            "Spjutsbygd": "740011462",
-                            "Spjutsbygds vsk": "740023361",
-                            "St Lycke": "740023365",
-                            "St Måns väg": "740031952",
-                            "Stadsträdgården": "740031792",
-                            "Staffansbygd": "740032043",
-                            "Stationsvägen": "740032017",
-                            "Stationsvägen Slottsbacken": "740031799",
-                            "Steneryd": "740011484",
-                            "Stengöl": "740011485",
-                            "Stensborg": "740032085",
-                            "Stora Rom": "740031957",
-                            "Strandgatan": "740031878",
-                            "Strandhem": "740032037",
-                            "Strandvägen": "740032039",
-                            "Strannakullen": "740031980",
-                            "Strågeryd": "740032003",
-                            "Strömsberg": "740011519",
-                            "Strömsbergs skola": "740023363",
-                            "Stubbelycke": "740011526",
-                            "Stubbemåla/Råsen vsk": "740035348",
-                            "Sturkö kyrka": "740023364",
-                            "Sturkö skola": "740031978",
-                            "Sturköhallen": "740031982",
-                            "Sturkövägen": "740022583",
-                            "Stålemara": "740031922",
-                            "Sundetvägen": "740031989",
-                            "Sunnadal": "740031784",
-                            "Svanhalla": "740031945",
-                            "Svensgöl": "740032041",
-                            "Såglyckan": "740032095",
-                            "Säby": "740031990",
-                            "Sälleryd": "740032008",
-                            "Södra Fur": "740032051",
-                            "Södra Hässlegården": "740031805",
-                            "Södra Ringö": "740031838",
-                            "Söremåla": "740031916",
-                            "Tjurkö kyrka": "740011623",
-                            "Tockamålav. E22": "740034395",
-                            "Tockatorp": "740031983",
-                            "Toras väg": "740031841",
-                            "Torhamn": "740011636",
-                            "Torskors": "740011646",
-                            "Torsnäsvägen": "740031965",
-                            "Torstäva": "740031966",
-                            "Torstäva vsk": "740031964",
-                            "Trastvägen": "740032016",
-                            "Trollberget": "740032000",
-                            "Trollemåla": "740032005",
-                            "Trummenäsvägen": "740031967",
-                            "Truseryd": "740031949",
-                            "Tullparken": "740031877",
-                            "Tullskolan": "740031778",
-                            "Tving": "740011676",
-                            "Tving skola": "740032130",
-                            "Tvingelshed": "740032035",
-                            "Tångenvägen": "740032116",
-                            "Törnåkra": "740031900",
-                            "Törnåkravägen": "740031924",
-                            "Uddabygd": "740032056",
-                            "Uranvägen Torskors": "740031859",
-                            "Uttorp": "740004348",
-                            "Vallby": "740031893",
-                            "Varvet": "740031821",
-                            "Vattentornet": "740031915",
-                            "Verkö": "740031840",
-                            "Verkö färjeterminalen": "740022976",
-                            "Viadukten": "740032015",
-                            "Viökvarnsvägen": "740032021",
-                            "Viövägen": "740032022",
-                            "Västernäs": "740031971",
-                            "Wämöparken": "740032976",
-                            "Yasjö": "740032020",
-                            "Åbyholmsvägen": "740032052",
-                            "Åsen": "740032083",
-                            "Åvägen": "740032097",
-                            "Ängholmen": "740031839",
-                            "Ängsvägen": "740032101",
-                            "Ärkilsmåla": "740032084",
-                            "Östra Torp": "740031795",
-                        },
-                        "TRAIN":{
-                            "Bergåsa station": "740001537",
-                            "Holmsjö": "740000771",
-                            "Karlskrona Centralstation": "740000230",
-                            "Kungsplan": "740020510",
-                        },
-                        "FERRY":{
-                            "Björkholmen brygga": "740074432",
-                            "Bredavik brygga": "740072446",
-                            "Brändaholm": "740017990",
-                            "Dragsö brygga": "740017989",
-                            "Finskan": "740017994",
-                            "Fisktorget": "740020700",
-                            "Handelshamnen": "740020699",
-                            "Hasslö Horns brygga": "740072529",
-                            "Herrgårdsviken": "740021794",
-                            "Inlängan": "740021799",
-                            "Karlskrona Centralstation": "740000230",
-                            "Kastellet": "740017996",
-                            "Långören": "740021798",
-                            "Marinmuseum": "740017997",
-                            "Nättraby centrum": "740024966",
-                            "Saltö Fiskhamn brygga": "740074438",
-                            "Sjuhalla": "740017988",
-                            "Skeppsbron brygga": "740074431",
-                            "Stenshamn": "740021801",
-                            "Trummenäs brygga": "740076466",
-                            "Ungskär": "740021802",
-                            "Wrängö": "740017987",
-                            "Wämöparken brygga": "740074440",
-                            "Ytterön": "740021796",
-                            "Yttre Park": "740017992",
-                            "Åslätten": "740017991",
-                        },
-                        "ALL":{
-                            "Af Chapmangymnasiet": "740031814",
-                            "Afvelsgärdevägen": "740031811",
-                            "Alamedan": "740031817",
-                            "Allatorp": "740011253",
-                            "Allatorp norra": "740032145",
-                            "Allatorps gård": "740010009",
-                            "Allévägen": "740032109",
-                            "Allsjömåla": "740032026",
-                            "Alnaryd": "740010013",
-                            "Alvarsmåla": "740074579",
-                            "Amiralen": "740031800",
-                            "Amiralitetstorget": "740040917",
-                            "Angöringen": "740031886",
-                            "Ankaret": "740031823",
-                            "Annebergsvägen": "740031943",
-                            "Annebo": "740031796",
-                            "Attanäs": "740031948",
-                            "Augerums kyrka": "740031996",
-                            "AWA vägen": "740031813",
-                            "Backabo": "740031791",
-                            "Bastasjö": "740031801",
-                            "Benabacken": "740032098",
-                            "Berg": "740032069",
-                            "Berget": "740032009",
-                            "Bergtorpsvägen": "740032075",
-                            "Bergåsa centrum": "740031781",
-                            "Bergåsa station": "740001537",
-                            "Bjurabyggetv": "740032082",
-                            "Bjärby": "740032088",
-                            "Bjärbylund": "740032090",
-                            "Björkdalavägen": "740031931",
-                            "Björkedal": "740031907",
-                            "Björkenäs": "740031937",
-                            "Björkenäs kvarn": "740031938",
-                            "Björkeryd": "740032136",
-                            "Björkholmen brygga": "740074432",
-                            "Bokskogsvägen": "740032096",
-                            "Boråkra": "740032110",
-                            "Bostorp": "740011306",
-                            "Branthalla": "740031958",
-                            "Bredavik": "740031976",
-                            "Bredavik brygga": "740072446",
-                            "Bredäng": "740031939",
-                            "Brofästet": "740032147",
-                            "Bromålavägen": "740032025",
-                            "Bråstorp": "740032068",
-                            "Bråtelycke": "740031918",
-                            "Brändaholm": "740017990",
-                            "Bränteknuva by": "740032146",
-                            "Bränteknuva vsk": "740032132",
-                            "Brödlösevägen": "740032048",
-                            "Brömsebro": "740000597",
-                            "Bröstorp": "740032067",
-                            "Bubbetorp": "740032010",
-                            "Byasjövägen": "740032070",
-                            "Bygatan Tving": "740051717",
-                            "Campus Gräsvik": "740032188",
-                            "Carlandravägen": "740031812",
-                            "Carlemansvägen": "740031793",
-                            "Chapmansplan": "740031853",
-                            "Dalamad": "740032104",
-                            "Dalby": "740011165",
-                            "Djupasund": "740031987",
-                            "Dragsvik": "740031974",
-                            "Dragsö brygga": "740017989",
-                            "Drottninggatan": "740031815",
-                            "Duverum": "740031894",
-                            "E22": "740031908",
-                            "Egilslunden": "740031881",
-                            "Ekeberg": "740031789",
-                            "Ekedalsvägen (1)": "740031834",
-                            "Ekedalsvägen (2)": "740031895",
-                            "Ekekullen": "740032032",
-                            "Ekeryd": "740031911",
-                            "Ekerydsvägen": "740031897",
-                            "Ekholmen": "740031874",
-                            "Eklunda": "740031917",
-                            "Emmeryd": "740032062",
-                            "Enkullen": "740031901",
-                            "Eringsbodavägen": "740032049",
-                            "Fabbemåla vsk": "740032006",
-                            "Falan": "740032080",
-                            "Figgamålaväg": "740032079",
-                            "Finskan": "740017994",
-                            "Fisktorget": "740020700",
-                            "Fjärdsjömåla": "740010344",
-                            "Flyerydsvägen": "740031913",
-                            "Flyetvägen": "740031941",
-                            "Fridlevstad": "740010377",
-                            "Frändatorp": "740031975",
-                            "Fur": "740010387",
-                            "Furs Sjukhus": "740010387",
-                            "Fågelmara": "740001062",
-                            "Fågelmara gård": "740031921",
-                            "Fågelmara skola": "740023373",
-                            "Färmanstorpsv": "740032107",
-                            "G Torhamns väg": "740031810",
-                            "Ga Riksvägen": "740031835",
-                            "Galgamarkstrappan": "740031888",
-                            "Gillabro": "740032134",
-                            "Giserydsvägen": "740032004",
-                            "Gisslevik": "740031953",
-                            "Granholmen": "740032031",
-                            "Granitvägen (1)": "740032014",
-                            "Granitvägen (2)": "740032100",
-                            "Gröna huset": "740031909",
-                            "Grönadal": "740032105",
-                            "Grönadals brygga": "740074573",
-                            "Gullaberg": "740031828",
-                            "Gullberna": "740072447",
-                            "Gullberna station": "740031863",
-                            "Gullholma": "740031935",
-                            "Gängletorp": "740025942",
-                            "Göksjöholm": "740032023",
-                            "H Martinsons väg": "740031809",
-                            "Hallarna": "740010555",
-                            "Hallarum": "740031961",
-                            "Hallarums backe": "740031960",
-                            "Hallaslättslyckan": "740031959",
-                            "Hammarsvägen": "740031956",
-                            "Hamnvägen": "740031944",
-                            "Handelshamnen": "740020699",
-                            "Harstorp": "740032137",
-                            "Hasslö": "740023345",
-                            "Hasslö Fabian Månssons väg": "740000017",
-                            "Hasslö Horns brygga": "740072529",
-                            "Herrgårdsviken": "740021794",
-                            "Herrgårdsvägen": "740031848",
-                            "Hildehult": "740032029",
-                            "Hjälmserydsv": "740031927",
-                            "Holmsjö": "740000771",
-                            "Horn (Kyrkan)": "740010554",
-                            "Horsarydsvägen": "740031929",
-                            "Hultvägen": "740031868",
-                            "Hålan": "740031977",
-                            "Häcken": "740031910",
-                            "Hälsovägen": "740031832",
-                            "Hässlegårdens förskola": "740031803",
-                            "Hästö": "740031849",
-                            "Hästö idrottsplats": "740031847",
-                            "Högklint": "740032061",
-                            "Hörnsjö": "740073767",
-                            "Höryda": "740032066",
-                            "Hörydavägen": "740032054",
-                            "Idehult": "740032077",
-                            "Inlängan": "740021799",
-                            "Intagsvägen": "740031790",
-                            "Johannesberg": "740032060",
-                            "Jämjö centrum": "740000333",
-                            "Jämjö Parkvägen": "740010723",
-                            "Jändelskolan": "740031962",
-                            "Järavägen": "740032169",
-                            "Kallingevägen": "740032072",
-                            "Karlsberg": "740031969",
-                            "Karlsgärde": "740032092",
-                            "Karlskrona Centralstation": "740000230",
-                            "Karlskrona centrum": "740023372",
-                            "Karlstorp": "740031920",
-                            "Kastellet": "740017996",
-                            "Kemivägen": "740032059",
-                            "Kestorp": "740010773",
-                            "Killevägen": "740031979",
-                            "Klakebäck": "740031926",
-                            "Klakebäcksvägen": "740031896",
-                            "Knösö": "740031869",
-                            "Knösövägen": "740031833",
-                            "Konungshamn": "740010812",
-                            "Kristanopel vsk": "740059480",
-                            "Kristianopel": "740010826",
-                            "Krokebro": "740031999",
-                            "Kronotorp": "740031794",
-                            "Kuleryd": "740032036",
-                            "Kungastenen": "740031986",
-                            "Kungsmarken A-huset": "740031826",
-                            "Kungsmarken B-huset": "740031825",
-                            "Kungsmarken C-huset": "740031824",
-                            "Kungsmarken centrum": "740031827",
-                            "Kungsplan": "740020510",
-                            "Kvarnagårdsvägen": "740032038",
-                            "Kvarnen": "740000469",
-                            "Kvarngatan": "740031887",
-                            "Kyrkogården": "740031831",
-                            "Kättilsmåla": "740010884",
-                            "Käxelåkra": "740031899",
-                            "Lagmansgatan": "740031880",
-                            "Lallerstedts gata": "740031865",
-                            "Landsvägsgatan": "740031777",
-                            "Ledja": "740010909",
-                            "Lejonbacken": "740031988",
-                            "Lillö": "740032024",
-                            "Lindesnäs": "740031783",
-                            "Lokstallarna": "740037242",
-                            "Lugna Dal": "740032055",
-                            "Lyckeby centrum": "740000663",
-                            "Lyckeby Slottsbacken": "740032193",
-                            "Lyckeåborg": "740010999",
-                            "Långemålavägen": "740032078",
-                            "Långenabben": "740031940",
-                            "Långö": "740031879",
-                            "Långören": "740021798",
-                            "Lösen": "740031889",
-                            "Marieberg": "740031829",
-                            "Marieberg Tving": "740032073",
-                            "Mariedalsvägen": "740031932",
-                            "Mariefors": "740031997",
-                            "Mariefröjd": "740032002",
-                            "Marinmuseum": "740017997",
-                            "Masten vsk": "740035415",
-                            "Milastensvägen": "740031906",
-                            "Missionshuset": "740032063",
-                            "Mjövikstrandsv": "740011061",
-                            "Mommelycke": "740032135",
-                            "Motellet": "740024915",
-                            "Målatorps vsk": "740032133",
-                            "Måstad": "740032071",
-                            "Möckleryd": "740031954",
-                            "Möcklerydsv": "740031955",
-                            "Möcklö": "740031968",
-                            "Möcklöbron": "740031970",
-                            "Mölletorp": "740011100",
-                            "Mölleåker": "740031998",
-                            "Mörtövägen": "740032018",
-                            "N Attanäs": "740031936",
-                            "N Binga": "740031898",
-                            "N Buggamåla": "740010195",
-                            "N Flymen": "740032027",
-                            "N Orranäs": "740031934",
-                            "NKT Arena Karlskrona": "740032192",
-                            "NKT Verkö": "740031844",
-                            "Norra Hässlegården": "740031802",
-                            "Norra Svensgöl": "740032042",
-                            "Nättraby centrum": "740024966",
-                            "Nättraby E22": "740023351",
-                            "Nättraby hörnet": "740000564",
-                            "Nättraby kyrka": "740025541",
-                            "Nättraby skola": "740011166",
-                            "Nättrabyån": "740032115",
-                            "Nävragöl": "740011168",
-                            "Nävragöl slingan": "740032181",
-                            "Nävrasjö": "740032044",
-                            "Offamåla": "740032076",
-                            "Olofshem": "740031925",
-                            "Olsäng": "740031923",
-                            "Ordensgatan": "740031882",
-                            "Orranäs": "740031947",
-                            "Orranäs gata": "740031928",
-                            "Polhemsgatan": "740031779",
-                            "Pålycke": "740032064",
-                            "Ramdala": "740011210",
-                            "Ringö": "740031837",
-                            "Ringöbron": "740031864",
-                            "Rosenhill": "740031892",
-                            "Rosenholm": "740032108",
-                            "Roslundavägen": "740032099",
-                            "Roxtec Verkö": "740031842",
-                            "Ryd": "740023356",
-                            "Rydsvägen": "740032034",
-                            "Råbacken": "740031994",
-                            "Rödeby centrum": "740000521",
-                            "Rödeby Ek": "740011293",
-                            "Rödebyholm": "740023537",
-                            "Rödebyskolan": "740032013",
-                            "Rörsängsgatan": "740031919",
-                            "S Binga": "740011305",
-                            "S Buggamåla": "740032081",
-                            "S Fjärdsjömåla": "740032028",
-                            "S Fågelmara": "740031914",
-                            "S Svanhalla": "740031946",
-                            "S Svensgöl": "740032030",
-                            "S Sälleryd": "740032007",
-                            "Saleboda vsk": "740032053",
-                            "Saltö": "740031870",
-                            "Saltö Fiskhamn brygga": "740074438",
-                            "Saltö torg": "740031871",
-                            "Sanda": "740031984",
-                            "Sandbäcksmåla": "740032001",
-                            "Sandhamn": "740031951",
-                            "Sandhamns ek": "740031950",
-                            "Senoren": "740023402",
-                            "Sibbaboda": "740031942",
-                            "Silleboda": "740032087",
-                            "Sillesåsvägen": "740031912",
-                            "Sillhövda": "740032045",
-                            "Sillhövda kyrka": "740032047",
-                            "Silvervägen": "740031806",
-                            "Sjuhalla": "740017988",
-                            "Sjukhuset huvudentrén": "740024365",
-                            "Skallatorp": "740031981",
-                            "Skearydsvägen": "740031930",
-                            "Skeppsbron brygga": "740074431",
-                            "Skillinge": "740032089",
-                            "Skillingenäs": "740032106",
-                            "Skogsvägen": "740032033",
-                            "Skolhpl": "740032086",
-                            "Skällenäs": "740031973",
-                            "Skällö": "740031972",
-                            "Skärfva by": "740032074",
-                            "Skärva": "740032149",
-                            "Skärvaboda": "740032019",
-                            "Skönstavik": "740032091",
-                            "Smedjetorpsvägen": "740032065",
-                            "Smedvägen": "740031985",
-                            "Sofieberg": "740032050",
-                            "Sofieborgsvägen": "740031933",
-                            "Spandelstorp": "740031808",
-                            "Spandelstorpskolan": "740031807",
-                            "Sparre": "740031816",
-                            "Spjutsbygd": "740011462",
-                            "Spjutsbygds vsk": "740023361",
-                            "St Lycke": "740023365",
-                            "St Måns väg": "740031952",
-                            "Stadsträdgården": "740031792",
-                            "Staffansbygd": "740032043",
-                            "Stationsvägen": "740032017",
-                            "Stationsvägen Slottsbacken": "740031799",
-                            "Steneryd": "740011484",
-                            "Stengöl": "740011485",
-                            "Stensborg": "740032085",
-                            "Stenshamn": "740021801",
-                            "Stora Rom": "740031957",
-                            "Strandgatan": "740031878",
-                            "Strandhem": "740032037",
-                            "Strandvägen": "740032039",
-                            "Strannakullen": "740031980",
-                            "Strågeryd": "740032003",
-                            "Strömsberg": "740011519",
-                            "Strömsbergs skola": "740023363",
-                            "Stubbelycke": "740011526",
-                            "Stubbemåla/Råsen vsk": "740035348",
-                            "Sturkö kyrka": "740023364",
-                            "Sturkö skola": "740031978",
-                            "Sturköhallen": "740031982",
-                            "Sturkövägen": "740022583",
-                            "Stålemara": "740031922",
-                            "Sundetvägen": "740031989",
-                            "Sunnadal": "740031784",
-                            "Svanhalla": "740031945",
-                            "Svensgöl": "740032041",
-                            "Såglyckan": "740032095",
-                            "Säby": "740031990",
-                            "Sälleryd": "740032008",
-                            "Södra Fur": "740032051",
-                            "Södra Hässlegården": "740031805",
-                            "Södra Ringö": "740031838",
-                            "Söremåla": "740031916",
-                            "Tjurkö kyrka": "740011623",
-                            "Tockamålav. E22": "740034395",
-                            "Tockatorp": "740031983",
-                            "Toras väg": "740031841",
-                            "Torhamn": "740011636",
-                            "Torskors": "740011646",
-                            "Torsnäsvägen": "740031965",
-                            "Torstäva": "740031966",
-                            "Torstäva vsk": "740031964",
-                            "Trastvägen": "740032016",
-                            "Trollberget": "740032000",
-                            "Trollemåla": "740032005",
-                            "Trummenäs brygga": "740076466",
-                            "Trummenäsvägen": "740031967",
-                            "Truseryd": "740031949",
-                            "Tullparken": "740031877",
-                            "Tullskolan": "740031778",
-                            "Tving": "740011676",
-                            "Tving skola": "740032130",
-                            "Tvingelshed": "740032035",
-                            "Tångenvägen": "740032116",
-                            "Törnåkra": "740031900",
-                            "Törnåkravägen": "740031924",
-                            "Uddabygd": "740032056",
-                            "Ungskär": "740021802",
-                            "Uranvägen Torskors": "740031859",
-                            "Uttorp": "740004348",
-                            "Vallby": "740031893",
-                            "Varvet": "740031821",
-                            "Vattentornet": "740031915",
-                            "Verkö": "740031840",
-                            "Verkö färjeterminalen": "740022976",
-                            "Viadukten": "740032015",
-                            "Viökvarnsvägen": "740032021",
-                            "Viövägen": "740032022",
-                            "Västernäs": "740031971",
-                            "Wrängö": "740017987",
-                            "Wämöparken": "740032976",
-                            "Wämöparken brygga": "740074440",
-                            "Yasjö": "740032020",
-                            "Ytterön": "740021796",
-                            "Yttre Park": "740017992",
-                            "Åbyholmsvägen": "740032052",
-                            "Åsen": "740032083",
-                            "Åslätten": "740017991",
-                            "Åvägen": "740032097",
-                            "Ängholmen": "740031839",
-                            "Ängsvägen": "740032101",
-                            "Ärkilsmåla": "740032084",
-                            "Östra Torp": "740031795",
-                        }
-                    }
-
-                    # EJ Hittade:
-                    # Monsunen (Buss)
-
+        module_dir = __file__.replace("\\", "/").rpartition("/")[0] or "."
+        with open(module_dir + "/STOPS.json", "r", encoding="utf-8") as file:
+            self.STOPS = json.load(file)
         self.wifi_name: str = self.connect_wifi() or "Offline"
         self.create_ui() # Function to trigger creation of UI
         log("student application ready")
@@ -949,7 +144,7 @@ class Application:
 
     def create_title_screen(self):
         """Function: Startup-screen"""
-        self.title_screen = self.tileview.add_tile(0, 0, lv.DIR.RIGHT) # Create a screen on our tileview
+        self.title_screen = self.tileview.add_tile(2, 0, lv.DIR.RIGHT | lv.DIR.LEFT) # Create a screen on our tileview
 
         # Create labels for title-screen
         self.title_screen_label = lv.label(self.title_screen) # Add a label to the Title screen
@@ -978,12 +173,12 @@ class Application:
         self.labels.append(self.title_screen_label_version) # Add to list of all labels
         log("title-screen created")
 
-    def clear_departures(self):
+    def destroy_screen(self, screen):
         """Clears existing departure data to be replaced with new data."""
         def belongs_to_departures(widget):
             parent = widget.get_parent()
             while parent is not None:
-                if parent == self.dep_scr:
+                if parent == screen:
                     return True
                 parent = parent.get_parent()
             return False
@@ -994,7 +189,6 @@ class Application:
                 if not belongs_to_departures(widget)
             ]
         self.dep_scr.clean()
-        # self.dep_scr.scroll_to_y(0, )
 
     def on_tile_changed(self, _event):
         """Runs whenever a tile is changed"""
@@ -1010,10 +204,18 @@ class Application:
             self.refresh_departures()
             log("on_tile_changed called")
 
+        if previous_tile == self.journey_selection_screen and current_tile == self.journey_screen:
+            self.journeys = find_journey(self.journey_from, self.journey_to)
+            log("on_tile_changed called")
+
+    def refresh_journeys(self, journeys):
+        """To update Journeys"""
+        self.destroy_screen(self.journey_screen)
+
     def refresh_departures(self):
         """To update dep"""
 
-        self.clear_departures()
+        self.destroy_screen(self.dep_scr)
 
         transport_types = sorted(self.STOPS)
         transport_type = transport_types[
@@ -1175,7 +377,7 @@ class Application:
 
     def create_settings_screen(self):
         """Function: Create a settings screen"""
-        self.settings_screen = self.tileview.add_tile(1, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a screen on our tileview
+        self.settings_screen = self.tileview.add_tile(3, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a screen on our tileview
 
         # SETTINGS HEADER
         settings_header = lv.label(self.settings_screen)
@@ -1335,7 +537,7 @@ class Application:
 
     def create_qr_legal_screen(self):
         """Shows a QR-code for the legal-text related to Trfa"""
-        self.qr_scr = self.tileview.add_tile(1, 1, lv.DIR.NONE)
+        self.qr_scr = self.tileview.add_tile(3, 1, lv.DIR.NONE)
         self.backgrounds.append(self.qr_scr)
 
         return_label = lv.label(self.qr_scr)
@@ -1354,6 +556,98 @@ class Application:
         self.qr_image.set_src("S:/assets/QR_Black_On_White.png")
         self.qr_image.center()
 
+    def create_journey_selection_screen(self):
+        """Function: Create a journey selection screen"""
+        self.journey_selection_screen = self.tileview.add_tile(1, 0, lv.DIR.LEFT | lv.DIR.RIGHT)
+
+        # JOURNEY HEADER
+        journey_header = lv.label(self.journey_selection_screen)
+        journey_header.set_text("Journey Selection")
+        journey_header.set_style_text_font(self.font_28, 0)
+        journey_header.align(lv.ALIGN.CENTER, 0, -150) # Place the label on the tile
+        self.labels.append(journey_header)
+
+        # FROM SELECTOR
+        from_label = lv.label(self.journey_selection_screen)
+        from_label.set_text("From:")
+        from_label.set_pos(75, 150)
+        from_label.set_style_text_font(self.font_28, 0)
+        self.labels.append(from_label)
+
+        from_dropdown = lv.dropdown(self.journey_selection_screen)
+        from_dropdown.set_pos(200, 150)
+        from_dropdown.set_width(325)
+        from_names = sorted(self.STOPS[self.default_transport_type])
+        from_dropdown.set_options("\n".join(from_names))
+
+        selected_from = (
+            from_names.index(self.default_stop)
+            if self.default_stop in from_names
+            else 0)
+
+        from_dropdown.set_selected(selected_from)
+        self.default_to = from_names[selected_from]
+        self.to_dropdown = from_dropdown
+        self.controls.append(from_dropdown)
+        def on_from_changed(_event):
+            """What to do when a different value is selected"""
+            names = from_dropdown.get_options().splitlines()
+            index = from_dropdown.get_selected()
+            if 0 <= index < len(names):
+                self.default_from = names[index]
+            log(f"Selected: {self.default_from}")
+        from_dropdown.add_event_cb( # This listens to updates to the dropdown
+            on_from_changed, # This is the function it will run.
+            lv.EVENT.VALUE_CHANGED, # When a value is changed
+            None,
+        )
+
+        # STOP SELECTOR
+        to_label = lv.label(self.journey_selection_screen)
+        to_label.set_text("To:")
+        to_label.set_pos(75, 250)
+        to_label.set_style_text_font(self.font_28, 0)
+        self.labels.append(to_label)
+
+        to_dropdown = lv.dropdown(self.journey_selection_screen)
+        to_dropdown.set_pos(200, 250)
+        to_dropdown.set_width(325)
+        to_names = sorted(self.STOPS[self.default_transport_type])
+        to_dropdown.set_options("\n".join(to_names))
+
+        selected_to = (
+            to_names.index(self.default_stop)
+            if self.default_stop in to_names
+            else 0
+        )
+        to_dropdown.set_selected(selected_to)
+        self.default_to = to_names[selected_to]
+        self.to_dropdown = to_dropdown
+        self.controls.append(to_dropdown)
+        def on_to_changed(_event):
+            """What to do when a different value is selected"""
+            names = to_dropdown.get_options().splitlines()
+            index = to_dropdown.get_selected()
+            if 0 <= index < len(names):
+                self.default_to = names[index]
+            log(f"Selected: {self.default_to}")
+        to_dropdown.add_event_cb( # This listens to updates to the dropdown
+            on_to_changed, # This is the function it will run.
+            lv.EVENT.VALUE_CHANGED, # When a value is changed
+            None,
+        )
+        #### Add for potential Dark/Light mode
+        self.backgrounds.append(self.journey_selection_screen)
+        log("journey-screen created")
+
+    def create_journey_screen(self):
+        self.journey_screen = self.tileview.add_tile(0, 0, lv.DIR.LEFT)
+        self.journey_screen_label = lv.label(self.journey_screen)
+        self.journey_screen_label.set_text("Reseskärm")
+        self.journey_screen_label.align(lv.ALIGN.TOP_MID, 0, 15)
+        self.backgrounds.append(self.journey_screen)
+        self.labels.append(self.journey_screen_label)
+
     def create_ui(self):
         'Function: Creates UI'
         #api_data = read_data(False) ## IF TRUE, ONLY USE TEST-DATA INSTEAD (i.e. don't use ACTUAL data)
@@ -1363,9 +657,12 @@ class Application:
         self.read_settings()
         self.create_title_screen() ## Creation of Title-Screen
         self.create_qr_legal_screen() ## Create QR-screen
+        self.create_journey_selection_screen() ## Create Journey Selection Screen
+        self.create_journey_screen() ## Create subsequent Journey Screen
         self.create_settings_screen() ## Placeholder creation of Settings-screen
-        self.dep_scr = self.tileview.add_tile(2, 0, lv.DIR.LEFT) # Create a placeholder departure screen
+        self.dep_scr = self.tileview.add_tile(4, 0, lv.DIR.LEFT) # Create a placeholder departure screen
         self.backgrounds.append(self.dep_scr)
+        self.tileview.set_tile(self.title_screen, False)
 
         self.previous_tile = self.tileview.get_tile_active()
         self.tileview.add_event_cb(
@@ -1383,16 +680,6 @@ class Application:
     @staticmethod
     def connect_wifi():
         'Function: Connects to WiFi'
-        # log("connecting to Wi-Fi SSID: " + WIFI_SSID)
-        # station = network.WLAN(network.STA_IF)
-        # station.active(True)
-        # station.connect(WIFI_SSID, WIFI_PASSWORD)
-        # started = time.ticks_ms() # pylint: disable=no-member
-        # while (not station.isconnected() and
-        #        time.ticks_diff(time.ticks_ms(), started) < 15_000): # pylint: disable=no-member
-        #     time.sleep_ms(250) # pylint: disable=no-member
-        # log("Wi-Fi connected" if station.isconnected()
-        #     else "Wi-Fi could not connect (timeout)")
         networks = WIFI_LIST or [(WIFI_SSID, WIFI_PASSWORD)]
 
         station = network.WLAN(network.STA_IF)
