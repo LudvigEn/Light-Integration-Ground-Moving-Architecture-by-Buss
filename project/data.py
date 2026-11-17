@@ -47,7 +47,7 @@ class Stop:
     def __str__(self):
         return self.name
 
-def read_data(stop_id, test=False):
+def read_data(stop_id, test=False, dep="dep"):
     """Function to connect to, and fetch API-data"""
 
     if test: # This is just for test-cases (so we don't make an absurd amount of API-calls)
@@ -55,9 +55,13 @@ def read_data(stop_id, test=False):
             payload = json.load(file)
     else:
         # log("Opening API-connection")
+        if dep == "arr":
+            dep_or_arr = "arrivals/"
+        else:
+            dep_or_arr = "departures/"
         url = (
-            "https://realtime-api.trafiklab.se/v1/departures/"
-            f"{stop_id}?key={API_KEY}"
+            "https://realtime-api.trafiklab.se/v1/"
+            f"{dep_or_arr}{stop_id}?key={API_KEY}"
         )
         response = requests.get(url, timeout=10)
         try:
@@ -75,13 +79,10 @@ def parse_data(payload):
     """Takes indata from API-call,
     then divides them up into Route[Stop[Departures]]
     """
-    # transport_icons = {
-    #     "BUS": "S:/assets/bus.png",
-    #     "BOAT": "S:/assets/boat.png",
-    #     "TRAIN": "S:/assets/train.png"
-    # }
     query_time = payload["timestamp"]
     stops_by_id = {}
+    if "arrivals" in payload:
+        payload["departures"] = payload["arrivals"]
     if not payload["stops"]:
         return None
     for item in payload["stops"]:
@@ -132,9 +133,11 @@ def parse_data(payload):
 
 def find_journey(stops, start_stop, end_stop):
     """Finds best route between Stop A and Stop B"""
-    stop_a = next((stop for stop in stops if stop.name == start_stop), None)
-    stop_b = next((stop for stop in stops if stop.name == end_stop), None)
+    stop_a = next((stop for stop in stops if stop.name == start_stop), None) # Start-stop
+    stop_b = next((stop for stop in stops if stop.name == end_stop), None) # End-stop
+
     def extract_trip_id(stop):
+        """This extracts all trips 'touching' a stop."""
         try:
             return {
                 departure.trip_id
@@ -143,48 +146,44 @@ def find_journey(stops, start_stop, end_stop):
             }
         except AttributeError:
             return None
-        # return output
 
-    def no_transfer(start_stop, end_stop):
-        if start_stop is None or end_stop is None:
+
+    def one_leg(start_stop, end_stop):
+        """Trip between start_stop and end_stop"""
+        if start_stop is None or end_stop is None: # If input is faulty
             return None
         for departure_a in start_stop.departures: # Loop through all departures from stop A
             for departure_b in end_stop.departures: # Loop through all departures from stop B
-                time_a = departure_a.realtime or departure_a.scheduled
-                time_b = departure_b.realtime or departure_b.scheduled
+                time_a = departure_a.realtime or departure_a.scheduled # Realtime if exists, otherwise scheduled
+                time_b = departure_b.realtime or departure_b.scheduled # Realtime if exists, otherwise scheduled
                 time_b_seconds = (int(time_b[11:13])*3600 # Hour
                 + int(time_b[14:16])*60 # Minute
                 + int(time_b[17:19])) # Seconds
                 time_a_seconds = (int(time_a[11:13])*3600 # Hour
                 + int(time_a[14:16])*60 # Minute
                 + int(time_a[17:19])) # Second
-                if (
-                    departure_a.trip_id is not None
-                    and departure_a.trip_id == departure_b.trip_id
-                ):
-                    print(
-                        "Shared trip:", departure_a.trip_id,
-                        start_stop.name, time_a,
-                        "->", end_stop.name, time_b,
-                        "Canceled:", departure_a.canceled, departure_b.canceled
-                    )
-                if time_b_seconds <= time_a_seconds:
+                if time_b_seconds <= time_a_seconds: # No "backwards" trips
                     continue
                 if departure_a.canceled or departure_b.canceled: # If either is cancelled
                     continue
                 if departure_a.trip_id == departure_b.trip_id: # If there's a trip_id that matches
 
-                    trip_length = time_b_seconds - time_a_seconds
-                    return_string =  f"""Take route {departure_a.route.designation} towards {departure_a.route.destination} leaving at {time_a[11:19]}. Arrive by {time_b[11:19]}, the trip takes {trip_length} seconds"""
+                    trip_length = time_b_seconds - time_a_seconds # Total duration of this leg
+                    return_string =  f"""Take route {departure_a.route.designation}({departure_a.route.transport_type}) towards {departure_a.route.destination} leaving at {time_a[11:19]}. Arrive by {time_b[11:19]}, the trip takes {trip_length} seconds"""
                     return time_a_seconds, time_b_seconds, return_string
         return None
 
+
+    journeys = []
     ### No Transfer:
-    if no_transfer(stop_a, stop_b) is not None:
-        return no_transfer(stop_a, stop_b)[2]
+    if one_leg(stop_a, stop_b) is not None: # If there is a valid trip between Stop A and B
+        journeys.append(one_leg(stop_a, stop_b)[2])
+    else:
+        log(f"No one-leg-journey between {stop_a} and {stop_b}")
 
-
-    ### Check all stops:
+    #########################################################################################
+    ### Here comes the hard part, we need to check all stops for possible transfer-stops: ###
+    #########################################################################################
     module_dir = __file__.replace("\\", "/").rpartition("/")[0] or "."
     with open(module_dir + "/STOPS.json", "r", encoding="utf-8") as file:
         all_stops = json.load(file)
@@ -194,6 +193,7 @@ def find_journey(stops, start_stop, end_stop):
         if result is not None:
             stop, query_time = result
             stop_list.append(stop)
+    # Now we have data on all stops.
 
     trips_a = extract_trip_id(stop_a)
     trips_b = extract_trip_id(stop_b)
@@ -204,27 +204,23 @@ def find_journey(stops, start_stop, end_stop):
         trips_here = extract_trip_id(stop)
         if trips_here & trips_a and trips_here & trips_b:
             transfer_stops.append(stop)
-    # transfer_stop_string = ""
-    # for stop in transfer_stops:
-    #     transfer_stop_string += stop.name + "|"
-    # log(f"Possible transfer stops: {transfer_stop_string}")
-    journeys = []
-    print("Candidates:",[stop.name for stop in transfer_stops])
+    candidate_transfer_stops = "Candidate transfer stops:",[stop.name for stop in transfer_stops]
+    log(candidate_transfer_stops)
     for transfer_stop in transfer_stops:
-        print("Transfer stop:", transfer_stop)
-        first_leg = no_transfer(stop_a, transfer_stop)
-        second_leg = no_transfer(transfer_stop, stop_b)
-        print("First leg", first_leg)
-        print("Second leg", second_leg)
+        # print("Transfer stop:", transfer_stop)
+        first_leg = one_leg(stop_a, transfer_stop) # From Stop A to Transfer-stop
+        second_leg = one_leg(transfer_stop, stop_b) # From Transfer-stop to Stop B
+        # print("First leg", first_leg)
+        # print("Second leg", second_leg)
 
-        if first_leg is None or second_leg is None:
+        if first_leg is None or second_leg is None: # If legs are unstable (e.g. arrive before leave)
             continue
-        first_start, first_end, first_string = first_leg
-        second_start, second_end, second_string = second_leg
-        if first_end <= second_start:
-            print("Connection possible:", first_end <= second_start)
+        first_start, first_end, first_string = first_leg # Split up output into depart-time, arrival-time and string
+        second_start, second_end, second_string = second_leg # Split up output into depart-time, arrival-time and string
+        if first_end <= second_start: # As long as arrival-time of first-leg is less than departure-time of second-leg.
+            # print("Connection possible:", first_end <= second_start)
             total_travel_time = second_end - first_start
-            journeys.append((first_string + ", and then" + second_string + f". Total trip time:{total_travel_time} seconds.", total_travel_time))
+            journeys.append((first_string + ", and then " + second_string + f". Total trip time:{total_travel_time} seconds.", total_travel_time))
     journeys.sort(
         key=lambda journey: journey[1]
     )
@@ -237,11 +233,11 @@ def find_journey(stops, start_stop, end_stop):
 def main():
     """Main..."""
     stop1, _ = read_data("740032188")
-    stop2, _ = read_data("740031877")
+    stop2, _ = read_data("740001537", False, "arr")
     stops = [stop1, stop2]
     for stop in stops:
         print(stop, stop.id)
-    print(find_journey(stops, "Campus Gräsvik", "Tullparken"))
+    print(find_journey(stops, "Campus Gräsvik", "Bergåsa station"))
 
 if __name__ == "__main__":
     main()
