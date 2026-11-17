@@ -1,6 +1,6 @@
 """Module to fetch, and return data"""
 import json
-from secrets import API_KEY # pylint:disable=no-name-in-module
+from secrets import TRAFIKLAB_API_KEY, RESROBOT_API_KEY # pylint:disable=no-name-in-module
 import requests
 try:
     from debug_log import log
@@ -50,7 +50,7 @@ def read_data(stop_id, test=False):
         log("Opening API-connection")
         url = (
             "https://realtime-api.trafiklab.se/v1/departures/"
-            f"{stop_id}?key={API_KEY}"
+            f"{stop_id}?key={TRAFIKLAB_API_KEY}"
         )
         response = requests.get(url, timeout=10)
         try:
