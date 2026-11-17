@@ -150,6 +150,7 @@ def read_data(stop_id, test=False):
                     f"API request failed:{response.status_code}"
                 )
             payload = response.json()
+            log(f"Success, stops: {len(payload["stops"])}")
         finally:
             response.close()
             log("Closing Trafiklab-API-connection")
@@ -159,11 +160,6 @@ def parse_data(payload):
     """Takes indata from API-call,
     then divides them up into Route[Stop[Departures]]
     """
-    # transport_icons = {
-    #     "BUS": "S:/assets/bus.png",
-    #     "BOAT": "S:/assets/boat.png",
-    #     "TRAIN": "S:/assets/train.png"
-    # }
     query_time = payload["timestamp"]
     stops_by_id = {}
     if not payload["stops"]:
@@ -222,6 +218,7 @@ def find_journey(stop_a, stop_b, transport_type="ALL"):
         STOPS = json.load(file)
     start_stop = STOPS[transport_type][stop_a]
     end_stop = STOPS[transport_type][stop_b]
+    # ResRobots stop-names are weirdly formatted and needs
     names_by_id = {
         str(stop_id): name
         for name, stop_id in STOPS["ALL"].items()
@@ -242,18 +239,15 @@ def find_journey(stop_a, stop_b, transport_type="ALL"):
                 f"API request failed:{response.status_code}"
             )
         payload = response.json()
+        log(f"Success, trips: {len(payload["Trip"])}")
     finally:
         response.close()
         log("Closing ResRobot-API-connection")
 
     ### PROCESS DATA
     journeys = [Journey(item, names_by_id) for item in payload["Trip"]]
-    # first = journeys[0]
-    # print(first.destination)
-    # print(first.departure_time)
-    # print(first.legs[0].line)
     journeys.sort()
-    return journeys, payload
+    return journeys, payload  # Payload is only interesting for manual runs
 
 def main():
     """Main..."""
