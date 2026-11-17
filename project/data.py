@@ -40,6 +40,97 @@ class Stop:
         self.lon = None
         self.departures: list[Departure] = None
 
+class Leg:
+    """Data on Leg(Part of journey) -granularity"""
+    def __init__(self, data, names_by_id):
+        origin = data["Origin"]
+        destination = data["Destination"]
+
+        self.origin = names_by_id.get(
+            str(origin.get("extId", "")),
+            origin["name"],
+        )
+        self.destination = names_by_id.get(
+            str(destination.get("extId", "")),
+            destination["name"],
+        )
+        self.departure_time = origin["time"]
+        d_hours, d_minutes, d_seconds = map(int, self.departure_time.split(":"))
+        self.departure_time_seconds = d_hours*3600 + d_minutes*60 + d_seconds
+        self.arrival_time = destination["time"]
+        a_hours, a_minutes, a_seconds = map(int, self.arrival_time.split(":"))
+        self.arrival_time_seconds = a_hours*3600 + a_minutes*60 + a_seconds
+        self.duration = self.arrival_time_seconds - self.departure_time_seconds
+        self.line = data.get("number")
+        if data["type"] == "WALK":
+            self.walk = True
+            self.dist = data["dist"]
+        else:
+            self.walk = False
+        self.direction = data.get("direction") or ""
+        if self.direction.endswith(" kn)"):
+            self.direction = self.direction.rsplit(" (", 1)[0]
+
+    def __repr__(self):
+        return str(self)
+
+    def __str__(self):
+        if not self.walk:
+            return f"\t{self.departure_time[:-3]}- Take line {self.line} towards {self.direction}, get of at {self.destination}."
+        else:
+            return f"\t{self.departure_time[:-3]}- Walk {self.dist}m ({round(self.dist/self.duration, 1)}m/s) to {self.destination}"
+
+class Journey:
+    """Data on Journey(Resa) -granularity"""
+    def __init__(self, data, names_by_id):
+        origin = data["Origin"]
+        destination = data["Destination"]
+
+        self.origin = names_by_id.get(
+            str(origin.get("extId", "")),
+            origin["name"],
+        )
+        self.destination = names_by_id.get(
+            str(destination.get("extId", "")),
+            destination["name"],
+        )
+        self.departure_time = origin["time"]
+        d_hours, d_minutes, d_seconds = map(int, self.departure_time.split(":"))
+        self.departure_time_seconds = d_hours*3600 + d_minutes*60 + d_seconds
+        self.arrival_time = destination["time"]
+        a_hours, a_minutes, a_seconds = map(int, self.arrival_time.split(":"))
+        self.arrival_time_seconds = a_hours*3600 + a_minutes*60 + a_seconds
+        self.duration  = self.arrival_time_seconds - self.departure_time_seconds
+
+        self.legs = [
+            Leg(item, names_by_id)
+            for item in data["LegList"]["Leg"]
+        ]
+
+    def __str__(self):
+        msg = f"{self.departure_time[:-3]} from {self.origin} to {self.destination}. "
+        msg += f"Arrive by {self.arrival_time[:-3]}. "
+        msg += f"Total travel time: {round(self.duration/60)} minutes."
+        for leg in self.legs:
+            msg += f"\n{leg}"
+        return msg
+
+    def __int__(self):
+        return self.duration
+
+    def __lt__(self, other):
+        if not isinstance(other, Journey):
+            return NotImplemented
+
+        return (
+            self.duration,
+            self.departure_time_seconds,
+        ) < (
+            other.duration,
+            other.departure_time_seconds
+        )
+
+
 def read_data(stop_id, test=False):
     """Function to connect to, and fetch API-data"""
 
@@ -47,7 +138,7 @@ def read_data(stop_id, test=False):
         with open("../assets/test_data/stop_740032188_formatted.json", "r", encoding="utf-8") as file:
             payload = json.load(file)
     else:
-        log("Opening API-connection")
+        log("Opening Trafiklab-API-connection")
         url = (
             "https://realtime-api.trafiklab.se/v1/departures/"
             f"{stop_id}?key={TRAFIKLAB_API_KEY}"
@@ -61,7 +152,7 @@ def read_data(stop_id, test=False):
             payload = response.json()
         finally:
             response.close()
-            log("Closing API-connection")
+            log("Closing Trafiklab-API-connection")
     return parse_data(payload)
 
 def parse_data(payload):
@@ -122,10 +213,55 @@ def parse_data(payload):
 
     return combined_stop, query_time
 
+def find_journey(stop_a, stop_b, transport_type="ALL"):
+    """Uses ResRobot API to find Journeys between stop_a and stop_b"""
+
+    #### FETCH STOP IDS
+    module_dir = __file__.replace("\\", "/").rpartition("/")[0] or "."
+    with open(module_dir + "/STOPS.json", "r", encoding="utf-8") as file:
+        STOPS = json.load(file)
+    start_stop = STOPS[transport_type][stop_a]
+    end_stop = STOPS[transport_type][stop_b]
+    names_by_id = {
+        str(stop_id): name
+        for name, stop_id in STOPS["ALL"].items()
+    }
+
+    #### FETCH API DATA FOR STOP IDS
+    log("Opening ResRobot-API-connection")
+    url = (
+        "https://api.resrobot.se/v2.1/trip?format=json&originId="
+        f"{start_stop}"
+        f"&destId={end_stop}"
+        f"&passlist=true&showPassingPoints=true&accessId={RESROBOT_API_KEY}"
+    )
+    response = requests.get(url, timeout=10)
+    try:
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"API request failed:{response.status_code}"
+            )
+        payload = response.json()
+    finally:
+        response.close()
+        log("Closing ResRobot-API-connection")
+
+    ### PROCESS DATA
+    journeys = [Journey(item, names_by_id) for item in payload["Trip"]]
+    # first = journeys[0]
+    # print(first.destination)
+    # print(first.departure_time)
+    # print(first.legs[0].line)
+    journeys.sort()
+    return journeys, payload
+
 def main():
     """Main..."""
-    data = read_data("740032188")
-    print(json.dumps(data, default=vars, indent=4, ensure_ascii=False))
+    journeys, payload = find_journey("Campus Gräsvik", "Amiralen")
+    with open("./assets/test_data/route_planner_output.json", "w", encoding="utf-8") as file:
+        json.dump(payload, file, indent=4, ensure_ascii=False)
+    for journey in journeys:
+        print(journey)
 
 if __name__ == "__main__":
     main()
