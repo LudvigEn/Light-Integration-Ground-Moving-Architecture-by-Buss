@@ -5,7 +5,7 @@ SIM_PYTHON=${SIM_PYTHON:-"$SIM_DIR/.venv/bin/python"}
 if [ ! -x "$SIM_PYTHON" ]; then
     SIM_PYTHON=python3
 fi
-"$SIM_PYTHON" -c 'import tkinter; import PIL' || {
+"$SIM_PYTHON" -c 'import sys; assert sys.version_info >= (3, 10), "Python 3.10 or newer is required"; import tkinter; import PIL' || {
     printf '\nPython with Tkinter and Pillow is required. See %s/README.md\n' "$SIM_DIR" >&2
     exit 1
 }
