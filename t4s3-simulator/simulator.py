@@ -17,6 +17,8 @@ import traceback
 import tkinter as tk
 from tkinter import filedialog, ttk
 from types import ModuleType
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 from fat_image import FatImage, TruncatedImageError
 import fs_driver_sim
@@ -42,6 +44,29 @@ def extract_image(source, destination):
         image.extract(destination)
         return full
     return source
+
+
+class StandardRequests:
+    """Standard-library fallback for the device application's HTTP GET API."""
+
+    @staticmethod
+    def get(url, *, timeout=None, headers=None):
+        request = Request(url, headers=headers or {})
+        try:
+            response = urlopen(request, timeout=timeout)
+        except HTTPError as error:
+            # Like requests, return HTTP error responses for the app to inspect.
+            response = error
+        try:
+            payload = response.read()
+            status_code = response.code
+        finally:
+            response.close()
+        result = ModuleType('response')
+        result.status_code = status_code
+        result.json = lambda: json.loads(payload)
+        result.close = lambda: None
+        return result
 
 
 class Requests(ModuleType):
@@ -116,7 +141,12 @@ def runtime(root, network, local_data=lambda: False):
     original_open, original_listdir = builtins.open, os.listdir
     original_cwd = Path.cwd()
     original_path = sys.path[:]
-    import requests as real_requests
+    try:
+        import requests as real_requests
+    except ModuleNotFoundError as error:
+        if error.name != 'requests':
+            raise
+        real_requests = StandardRequests
     app_names = {path.stem for path in root.glob('*.py')}
     module_names = app_names | {'lvgl', 'network', 'board_lvgl', 'utime', 'uos', 'requests', 'fs_driver'}
     modules = {name: sys.modules.get(name) for name in module_names}
@@ -143,7 +173,12 @@ def runtime(root, network, local_data=lambda: False):
     def device_path(path):
         if isinstance(path, (str, os.PathLike)):
             path = os.fspath(path)
-            if path.startswith('/'):
+            # POSIX host filenames also start with '/'. Keep extracted files
+            # (including new files) and existing host resources accessible to
+            # runpy, Pillow, requests and Python's import machinery.
+            if (isinstance(path, str) and path.startswith('/')
+                    and not Path(path).is_relative_to(root)
+                    and (path == '/' or not Path(path).exists())):
                 path = str(root / path.lstrip('/'))
         return path
 
@@ -186,7 +221,8 @@ class Simulator:
         if hidden:
             self.window.withdraw()
         self.network = Network(not offline)
-        self.state_dir = Path(state_dir) if state_dir is not None else DEFAULT_STATE
+        # Resolve before runtime() changes cwd to the extracted device image.
+        self.state_dir = Path(state_dir).resolve() if state_dir is not None else DEFAULT_STATE
         self.temp = tempfile.TemporaryDirectory(prefix='t4s3-sim-')
         self.root = Path(self.temp.name)
         self.context = None
@@ -280,7 +316,10 @@ class Simulator:
         if self.source and settings.is_file():
             destination = self.settings_path()
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(settings, destination)
+            # Path byte I/O uses io.open rather than the device's patched
+            # builtins.open. A new POSIX host file must not be remapped into
+            # the device image simply because it does not exist yet.
+            destination.write_bytes(settings.read_bytes())
 
     def boot(self):
         if not self.source:
