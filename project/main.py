@@ -37,7 +37,7 @@ from data import read_data # Load the data-processing module
 
 import fs_driver # pylint: disable=import-error
 
-VERSION = 0.4 # Version-control
+VERSION = 0.5 # Version-control
 
 class Application:
     """Class for application"""
