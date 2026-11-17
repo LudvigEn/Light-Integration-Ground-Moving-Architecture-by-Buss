@@ -29,6 +29,7 @@ jobs:
         shell: python
         env:
           TRAFIKLAB_API_KEY: ${{ secrets.TRAFIKLAB_API_KEY }}
+          RESROBOT_API_KEY: ${{ secrets.RESROBOT_API_KEY }}
         run: |
           import os
           from pathlib import Path
@@ -39,6 +40,7 @@ jobs:
 
           Path("project/secrets.py").write_text(
             "TRAFIKLAB_API_KEY = " + repr(key) + "\n",
+            "RESROBOT_API_KEY = " + repr(os.environ.get("RESROBOT_API_KEY", "")) + "\n",
             encoding="utf-8",
           )
       - name: Discover individual tests
