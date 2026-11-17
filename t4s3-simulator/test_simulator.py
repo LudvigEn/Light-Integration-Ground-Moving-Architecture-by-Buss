@@ -1074,14 +1074,14 @@ class SimulatorTests(unittest.TestCase):
         network.station.connect('test')
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            (root / 'secrets.py').write_text('API_KEY = "test-only"\n', encoding='utf-8')
+            (root / 'secrets.py').write_text('TRAFIKLAB_API_KEY = "test-only"\n', encoding='utf-8')
             (root / 'test_data').mkdir()
             (root / 'test_data' / 'stop_740032188_formatted.json').write_text(
                 json.dumps({'stops': [], 'departures': []}), encoding='utf-8')
             with runtime(root, network, local_data=lambda: True):
                 import secrets
                 import requests
-                self.assertEqual(secrets.API_KEY, 'test-only')
+                self.assertEqual(secrets.TRAFIKLAB_API_KEY, 'test-only')
                 self.assertEqual(time.ticks_diff(time.ticks_add((1 << 30) - 2, 5),
                                                  (1 << 30) - 2), 5)
                 self.assertIsInstance(time.ticks_ms(), int)
