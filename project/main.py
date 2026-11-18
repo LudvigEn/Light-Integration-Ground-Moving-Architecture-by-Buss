@@ -67,6 +67,9 @@ class Application:
         self.create_ui() # Function to trigger creation of UI
         log("student application ready")
 
+
+        """Function: runs the """
+
     def save_settings(self):
         """Function: Save settings to file."""
         with open("settings.txt", "w", encoding="utf-8") as file:
@@ -74,6 +77,11 @@ class Application:
             file.write(to_write)
             log_written = f"Saved: \n{to_write}"
             log(log_written)
+
+    def reset_settings(self):
+        """Function to reset settings by reloading setting screen"""
+        self.create_ui()
+        self.tileview.set_tile(self.settings_screen, False)
 
     def read_settings(self):
         """If a settings.txt file is present, read the data from it
@@ -93,6 +101,7 @@ class Application:
         self.default_stop = lines[0]
         self.default_transport_type = lines[1]
         self.dark_mode = lines[2] == "True"
+
 
     def apply_colors(self, screen="All"):
         """Function: Applies black/white to all elements depending on if Dark Mode is enabled or not"""
@@ -491,24 +500,26 @@ class Application:
             lv.EVENT.CLICKED,
             None,
         )
-        # # RESET SETTINGS
-        # reset_settings_button = lv.button(self.settings_screen)
-        # reset_settings_button.set_pos(280, 260)
-        # reset_settings_button.set_size(200, 50)
-        # reset_settings_button.set_style_border_width(2, 0)
-        # self.controls.append(reset_settings_button)
 
-        # reset_settings_label = lv.label(reset_settings_button)
-        # reset_settings_label.set_text("RESET")
-        # reset_settings_label.center()
-        # self.labels.append(reset_settings_label)
+        # RESET BUTTON
+        reset_settings_button = lv.button(self.settings_screen)
+        reset_settings_button.set_pos(356, 260)
+        reset_settings_button.set_size(200, 50)
+        reset_settings_button.set_style_border_width(2, 0)
+        self.controls.append(reset_settings_button)
 
-        # reset_settings_button.add_event_cb(
-        #     self.save_settings(),
-        #     lv.EVENT.CLICKED,
-        #     None,
-        # )
+        reset_settings_label = lv.label(reset_settings_button)
+        reset_settings_label.set_text("RESET")
+        reset_settings_label.center()
+        self.labels.append(reset_settings_label)
 
+        reset_settings_button.add_event_cb(
+            lambda _event: self.reset_settings(),
+            lv.EVENT.CLICKED,
+            None,
+        )
+
+        # QR CODE
         legal_label = lv.label(self.settings_screen)
         legal_label.set_text("Trafiklab ToS")
         legal_label.set_pos(200, 400)
