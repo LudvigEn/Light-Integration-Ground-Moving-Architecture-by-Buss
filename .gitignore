@@ -32,3 +32,4 @@ htmlcov/
 .DS_Store
 Thumbs.db
 Desktop.ini
+assets/test_data/route_planner_output.json
