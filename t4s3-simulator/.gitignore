@@ -1,1 +1,5 @@
 .state/
+.venv/
+__pycache__/
+dist/
+*.img

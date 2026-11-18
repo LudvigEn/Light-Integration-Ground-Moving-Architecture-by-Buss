@@ -127,6 +127,7 @@ class WidgetTests(unittest.TestCase):
         self.other_tile = self.view.add_tile(1, 0, lv.DIR.LEFT)
         self.app = Simulator.__new__(Simulator)
         self.app.canvas = self.canvas
+        self.app.source = None
         self.app.invoke = lambda action: (action(), self.app.refresh())
         self.app.refresh()
 
@@ -199,6 +200,102 @@ class WidgetTests(unittest.TestCase):
         control.remove_state(lv.STATE.DISABLED)
         control.click()
         self.assertFalse(control.is_open())
+
+    def test_long_dropdown_wheel_reaches_and_selects_last_option(self):
+        self.overflow()
+        control = lv.dropdown(self.tile)
+        control.set_pos(20, 140)
+        control.set_options('\n'.join(f'Stop {index}' for index in range(200)))
+        changed = Mock()
+        control.add_event_cb(changed, lv.EVENT.VALUE_CHANGED, None)
+        control.open()
+        self.canvas.reset_mock()
+        self.app.refresh()
+        popup = control.get_list()
+        self.assertGreater(popup.scroll_limit_y(), 0)
+        self.assertGreaterEqual(popup.y, 0)
+        self.assertLessEqual(popup.y + popup.height, 450)
+        self.assertLess(len(self.canvas.create_text.call_args_list), 25)
+        pointer = SimpleNamespace(x=popup.x + 10, y=popup.y + 10, delta=-120)
+        self.app.wheel(pointer)
+        self.assertGreater(popup.get_scroll_y(), 0)
+        self.assertEqual(self.tile.get_scroll_y(), 0)
+        self.assertTrue(control.is_open())
+        changed.assert_not_called()
+        self.app.wheel(pointer, 100000)
+        self.assertEqual(popup.get_scroll_y(), popup.scroll_limit_y())
+        self.assertTrue(any(call.kwargs.get('text') == 'Stop 199'
+                            for call in self.canvas.create_text.call_args_list))
+        last = SimpleNamespace(x=popup.x + 10, y=popup.y + popup.height - 10)
+        self.app.down(last)
+        self.app.up(last)
+        self.assertEqual(control.get_selected(), 199)
+        self.assertFalse(control.is_open())
+        changed.assert_called_once()
+        control.open()
+        self.app.refresh()
+        self.assertEqual(popup.get_scroll_y(), popup.scroll_limit_y())
+        # Small trackpad deltas accumulate rather than being rounded away.
+        previous = popup.get_scroll_y()
+        self.app.wheel(SimpleNamespace(x=pointer.x, y=pointer.y, delta=1))
+        self.assertLess(popup.get_scroll_y(), previous)
+        self.app.wheel(pointer, -100000)
+        self.assertEqual(popup.get_scroll_y(), 0)
+
+    def test_dropdown_drag_scroll_does_not_select_or_move_underlying_page(self):
+        self.overflow()
+        control = lv.dropdown(self.tile)
+        control.set_pos(20, 140)
+        control.set_options('\n'.join(f'Stop {index}' for index in range(100)))
+        changed = Mock()
+        control.add_event_cb(changed, lv.EVENT.VALUE_CHANGED, None)
+        control.open()
+        self.app.refresh()
+        popup = control.get_list()
+        self.app.down(SimpleNamespace(x=30, y=popup.y + popup.height - 20))
+        self.app.drag(SimpleNamespace(x=30, y=popup.y + 20))
+        self.app.up(SimpleNamespace(x=30, y=0))
+        self.assertGreater(popup.get_scroll_y(), 0)
+        self.assertEqual(control.get_selected(), 0)
+        self.assertTrue(control.is_open())
+        changed.assert_not_called()
+        self.assertEqual(self.tile.get_scroll_y(), 0)
+        self.assertEqual(self.view.active, (0, 0))
+        # Both popup swipes and gestures outside it are consumed while open.
+        for x, y in ((30, popup.y + 20), (500, 400)):
+            with self.subTest(x=x):
+                self.app.down(SimpleNamespace(x=x, y=y))
+                self.app.up(SimpleNamespace(x=x - 400, y=y))
+                self.app.wheel(SimpleNamespace(x=500, y=400, delta=-120))
+                self.assertEqual(self.view.active, (0, 0))
+                self.assertEqual(self.tile.get_scroll_y(), 0)
+                self.assertTrue(control.is_open())
+
+    def test_dropdown_above_control_reveals_selection_and_resets_new_options(self):
+        control = lv.dropdown(self.tile)
+        control.set_pos(500, 380)
+        control.set_options('\n'.join(f'Stop {index}' for index in range(100)))
+        control.set_selected(50)
+        control.get_list().set_style_text_font(lv.font_montserrat_28, 0)
+        control.open()
+        self.app.refresh()
+        popup = control.get_list()
+        self.assertGreater(popup.get_scroll_y(), 0)
+        self.assertGreaterEqual(popup.y, 0)
+        self.assertLessEqual(popup.y + popup.height, control.y)
+        self.assertLessEqual(popup.x + popup.width, 600)
+        self.assertTrue(any(call.kwargs.get('text') == 'Stop 50'
+                            for call in self.canvas.create_text.call_args_list))
+        control.set_options('New first\nNew second')
+        self.assertFalse(control.is_open())
+        control.open()
+        self.app.refresh()
+        self.assertEqual(popup.get_scroll_y(), 0)
+        self.assertEqual(popup.scroll_limit_y(), 0)
+        choice = SimpleNamespace(x=popup.x + 10, y=popup.y + popup.height - 10)
+        self.app.down(choice)
+        self.app.up(choice)
+        self.assertEqual(control.get_selected(), 1)
 
     def test_dropdown_popup_tracks_theme_while_open(self):
         control = lv.dropdown(self.tile)
@@ -907,6 +1004,37 @@ class SimulatorTests(unittest.TestCase):
             app.close()
         self.assertEqual(hashlib.sha256(Path(IMAGE).read_bytes()).digest(), before)
 
+    def test_stop_dropdown_scrolls_to_last_stop_in_packaged_application(self):
+        with tempfile.TemporaryDirectory() as state:
+            app = Simulator(IMAGE, hidden=True, local_data=True, state_dir=state)
+            try:
+                app.boot()
+                self.assertIn('app', app.scope, app.console.get('1.0', 'end'))
+                target = app.scope['app']
+                app.move(1, 0)
+                control = target.stop_dropdown
+                stops = control.get_options().splitlines()
+                touch = SimpleNamespace(x=control.x + 10, y=control.y + 10)
+                app.down(touch)
+                app.up(touch)
+                self.assertTrue(control.is_open())
+                popup = control.get_list()
+                self.assertGreater(popup.scroll_limit_y(), 0)
+                pointer = SimpleNamespace(x=popup.x + 10, y=popup.y + 10)
+                app.wheel(pointer, 100000)
+                self.assertEqual(popup.get_scroll_y(), popup.scroll_limit_y())
+                self.assertTrue(control.is_open())
+                last = SimpleNamespace(x=popup.x + 10, y=popup.y + popup.height - 10)
+                app.down(last)
+                app.up(last)
+                self.assertEqual(control.get_selected(), len(stops) - 1)
+                self.assertEqual(target.default_stop, stops[-1])
+                self.assertFalse(control.is_open())
+                self.assertEqual(target.settings_screen.get_scroll_y(), 0)
+                self.assertEqual(target.tileview.active, (1, 0))
+            finally:
+                app.close()
+
     def test_saved_settings_survive_reopening_image(self):
         with tempfile.TemporaryDirectory() as state:
             app = Simulator(IMAGE, hidden=True, local_data=True, state_dir=state)
@@ -946,14 +1074,14 @@ class SimulatorTests(unittest.TestCase):
         network.station.connect('test')
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            (root / 'secrets.py').write_text('API_KEY = "test-only"\n', encoding='utf-8')
+            (root / 'secrets.py').write_text('TRAFIKLAB_API_KEY = "test-only"\n', encoding='utf-8')
             (root / 'test_data').mkdir()
             (root / 'test_data' / 'stop_740032188_formatted.json').write_text(
                 json.dumps({'stops': [], 'departures': []}), encoding='utf-8')
             with runtime(root, network, local_data=lambda: True):
                 import secrets
                 import requests
-                self.assertEqual(secrets.API_KEY, 'test-only')
+                self.assertEqual(secrets.TRAFIKLAB_API_KEY, 'test-only')
                 self.assertEqual(time.ticks_diff(time.ticks_add((1 << 30) - 2, 5),
                                                  (1 << 30) - 2), 5)
                 self.assertIsInstance(time.ticks_ms(), int)
@@ -978,6 +1106,7 @@ class SimulatorTests(unittest.TestCase):
                 self.assertIn('app', app.scope, app.console.get('1.0', 'end'))
                 app.invoke(app.scope['app'].save_settings)
                 app.online.set(False)
+                app.wifi_ssid.set('Second network')
                 saved = app.settings_path()
 
                 def launch(command, **kwargs):
@@ -985,6 +1114,7 @@ class SimulatorTests(unittest.TestCase):
                     self.assertIsNone(app.context)
                     self.assertIn('--offline', command)
                     self.assertIn('--local-data', command)
+                    self.assertEqual(command[command.index('--wifi-ssid') + 1], 'Second network')
                     self.assertEqual(command[-2:], ['--state-dir', str(Path(state).resolve())])
 
                 with patch('simulator.subprocess.Popen', side_effect=launch) as process:
