@@ -885,30 +885,10 @@ class Application:
             file.write(to_write)
             log_written = f"Saved: \n{to_write}"
             log(log_written)
-        self.create_reset_button()
-
-    def create_reset_button(self):
-        """Function for creating reset button"""
-        reset_settings_button = lv.button(self.settings_screen)
-        reset_settings_button.set_pos(356, 260)
-        reset_settings_button.set_size(200, 50)
-        reset_settings_button.set_style_border_width(2, 0)
-        self.controls.append(reset_settings_button)
-
-        reset_settings_label = lv.label(reset_settings_button)
-        reset_settings_label.set_text("RESET")
-        reset_settings_label.center()
-        self.labels.append(reset_settings_label)
-
-        reset_settings_button.add_event_cb(
-            lambda _event: self.reset_settings(),
-            lv.EVENT.CLICKED,
-            None,
-        )
 
     def reset_settings(self):
-        """Function for resetting and reloading setting screen"""
-        self.read_settings()
+        """Function to reset settings by reloading setting screen"""
+        self.create_ui()
         self.tileview.set_tile(self.settings_screen, False)
 
     def read_settings(self):
@@ -1325,6 +1305,24 @@ class Application:
 
         save_settings_button.add_event_cb(
             lambda event: self.save_settings(),
+            lv.EVENT.CLICKED,
+            None,
+        )
+
+        # RESET BUTTON
+        reset_settings_button = lv.button(self.settings_screen)
+        reset_settings_button.set_pos(356, 260)
+        reset_settings_button.set_size(200, 50)
+        reset_settings_button.set_style_border_width(2, 0)
+        self.controls.append(reset_settings_button)
+
+        reset_settings_label = lv.label(reset_settings_button)
+        reset_settings_label.set_text("RESET")
+        reset_settings_label.center()
+        self.labels.append(reset_settings_label)
+
+        reset_settings_button.add_event_cb(
+            lambda _event: self.reset_settings(),
             lv.EVENT.CLICKED,
             None,
         )
