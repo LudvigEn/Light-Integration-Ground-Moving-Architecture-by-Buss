@@ -9,6 +9,7 @@ except ImportError:
         """Print diagnostics when the device logger is unavailable"""
         print(message)
 
+
 class Route:
     """Data on Route (Linje) -granularity
     """
@@ -20,6 +21,7 @@ class Route:
         self.stops: list[Stop] = None
         self.transport_type: str = None
 
+
 class Departure:
     """Data on Departure (Avgång) -granularity
     """
@@ -30,6 +32,7 @@ class Departure:
         self.canceled: bool = False
         self.route: Route = None
 
+
 class Stop:
     """Data on Stop (Hållplats) -granularity
     """
@@ -39,6 +42,7 @@ class Stop:
         self.lat = None
         self.lon = None
         self.departures: list[Departure] = None
+
 
 class Leg:
     """Data on Leg(Part of journey) -granularity"""
@@ -79,6 +83,7 @@ class Leg:
             return f"\t{self.departure_time[:-3]}- Take line {self.line} towards {self.direction}, get of at {self.destination}."
         else:
             return f"\t{self.departure_time[:-3]}- Walk {self.dist}m ({round(self.dist/self.duration, 1)}m/s) to {self.destination}"
+
 
 class Journey:
     """Data on Journey(Resa) -granularity"""
@@ -156,6 +161,7 @@ def read_data(stop_id, test=False):
             log("Closing Trafiklab-API-connection")
     return parse_data(payload)
 
+
 def parse_data(payload):
     """Takes indata from API-call,
     then divides them up into Route[Stop[Departures]]
@@ -209,6 +215,7 @@ def parse_data(payload):
 
     return combined_stop, query_time
 
+
 def find_journey(stop_a, stop_b, transport_type="ALL"):
     """Uses ResRobot API to find Journeys between stop_a and stop_b"""
 
@@ -249,9 +256,10 @@ def find_journey(stop_a, stop_b, transport_type="ALL"):
     journeys.sort()
     return journeys, payload  # Payload is only interesting for manual runs
 
+
 def main():
     """Main..."""
-    journeys, payload = find_journey("Campus Gräsvik", "Amiralen")
+    journeys, payload = find_journey("Campus Gräsvik", "Jämjö centrum")
     with open("./assets/test_data/route_planner_output.json", "w", encoding="utf-8") as file:
         json.dump(payload, file, indent=4, ensure_ascii=False)
     for journey in journeys:
