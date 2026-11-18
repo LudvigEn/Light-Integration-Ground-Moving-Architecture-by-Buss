@@ -546,6 +546,14 @@ class Application:
         self.qr_image.set_src("S:/assets/QR_Black_On_White.png")
         self.qr_image.center()
 
+    def create_journey_screen(self):
+        self.journey_screen = self.tileview.add_tile(0, 0, lv.DIR.RIGHT)
+        self.journey_screen_label = lv.label(self.journey_screen)
+        self.journey_screen_label.set_text("Reseskärm") 
+        self.journey_screen_label.align(lv.ALIGN.CENTER, 0, -180)
+        self.backgrounds.append(self.journey_screen)
+        self.labels.append(self.journey_screen_label)                                               
+        
     def create_ui(self):
         'Function: Creates UI'
         #api_data = read_data(False) ## IF TRUE, ONLY USE TEST-DATA INSTEAD (i.e. don't use ACTUAL data)
@@ -556,8 +564,10 @@ class Application:
         self.create_title_screen() ## Creation of Title-Screen
         self.create_qr_legal_screen() ## Create QR-screen
         self.create_settings_screen() ## Placeholder creation of Settings-screen
-        self.dep_scr = self.tileview.add_tile(2, 0, lv.DIR.LEFT) # Create a placeholder departure screen
+        self.create_journey_screen() ## Creates journey screen
+        self.dep_scr = self.tileview.add_tile(2, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a placeholder departure screen
         self.backgrounds.append(self.dep_scr)
+        self.create_journey_screen() ## Creates journey screen
 
         self.previous_tile = self.tileview.get_tile_active()
         self.tileview.add_event_cb(
