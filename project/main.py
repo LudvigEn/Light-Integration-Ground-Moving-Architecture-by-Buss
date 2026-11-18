@@ -558,10 +558,10 @@ class Application:
         self.qr_image.center()
 
     def create_journey_screen(self):
-        self.journey_screen = self.tileview.add_tile(0, 0, lv.DIR.LEFT)
+        self.journey_screen = self.tileview.add_tile(0, 0, lv.DIR.RIGHT)
         self.journey_screen_label = lv.label(self.journey_screen)
         self.journey_screen_label.set_text("Reseskärm") 
-        self.journey_screen_label.align(lv.ALIGN.TOP_MID, 0, 15)
+        self.journey_screen_label.align(lv.ALIGN.CENTER, 0, -180)
         self.backgrounds.append(self.journey_screen)
         self.labels.append(self.journey_screen_label)                                               
         
