@@ -50,6 +50,9 @@ Log out and back in for the group change to take effect.
 
 ## How to run the program
 
+To run without a board on macOS, Windows, or Linux, see the
+[desktop simulator setup](t4s3-simulator/README.md).
+
 1. Open the locally cloned repository with Visual Studio Code
     * If the "Do you trust the authors of the files in this folder?" dialog appears, click on "Yes, I trust the authors"
 2. Open up the file `project/main.py`

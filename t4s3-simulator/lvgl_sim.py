@@ -517,12 +517,38 @@ btn = button
 
 
 class _DropdownList(obj):
-    """Popup styles kept outside the normal child drawing tree."""
+    """Scrollable popup kept outside the normal child drawing tree."""
 
     def __init__(self, owner):
         super().__init__()
         self.parent = owner
         self.selected_colors = {}
+        self.row_height = 28
+        self.reveal_selected = False
+
+    def scroll_limit_y(self):
+        return max(0, len(self.parent.options) * self.row_height - self.height)
+
+    def layout(self, x, y):
+        """Fit whole rows above or below the control, within the display."""
+        owner = self.parent
+        self.row_height = max(28, _font_size(self.font) + 12)
+        below = max(0, _screen.height - (y + owner.height))
+        above = max(0, y)
+        content_height = len(owner.options) * self.row_height
+        opens_above = content_height > below and above > below
+        available = above if opens_above else below
+        rows = min(len(owner.options), max(1, int(available // self.row_height)))
+        self.width = min(owner.width, _screen.width)
+        self.height = rows * self.row_height
+        self.x = max(0, min(x, _screen.width - self.width))
+        top = y - self.height if opens_above else y + owner.height
+        self.y = max(0, min(top, _screen.height - self.height))
+        if self.reveal_selected:
+            self.scroll_to_y((owner.selected - rows // 2) * self.row_height)
+            self.reveal_selected = False
+        else:
+            self.scroll_to_y(self.scroll_y)
 
     def _set_color(self, name, color, selector):
         if selector == PART.MAIN:
@@ -563,6 +589,8 @@ class dropdown(obj):
     def set_options(self, options):
         self.options = str(options).split('\n') if options else []
         self.selected = 0
+        self.popup.scroll_y = 0
+        self.popup._text_images.clear()
         self.close()
 
     def get_options(self):
@@ -574,12 +602,16 @@ class dropdown(obj):
     def set_selected(self, index):
         if self.options:
             self.selected = max(0, min(int(index), len(self.options) - 1))
+            if self.opened:
+                self.popup.reveal_selected = True
 
     def get_selected(self):
         return self.selected
 
     def open(self):
         if not self.has_state(STATE.DISABLED) and self.options:
+            if not self.opened:
+                self.popup.reveal_selected = True
             self.opened = True
 
     def close(self):
@@ -767,29 +799,44 @@ def render():
         blocker.add_flag(obj.FLAG.CLICKABLE)
         blocker.click = node.close
         hits.append((0, 0, _screen.width, _screen.height, blocker))
-        row_height = max(28, _font_size(node.font) + 12)
-        popup_height = row_height * len(node.options)
-        left = max(0, min(x, _screen.width - node.width))
-        top = y + node.height
-        if top + popup_height > _screen.height:
-            top = max(0, y - popup_height)
         popup = node.get_list()
+        popup.layout(x, y)
+        left, top = popup.x, popup.y
+        right, bottom = left + popup.width, top + popup.height
+        row_height = popup.row_height
+        hits.append((left, top, right, bottom, popup))
         background = popup.bg or node.bg or '#eeeeee'
-        for index, option in enumerate(node.options):
-            row_y = top + index * row_height
+        # Keep text and touch targets on complete rows. Pixel offsets accumulate
+        # for small trackpad deltas; the visible list advances one row at a time.
+        first = int(popup.scroll_y // row_height)
+        last = min(len(node.options), first + int(popup.height // row_height))
+        visible_slots = {f'row{index}' for index in range(first, last)}
+        for slot in list(popup._text_images):
+            if slot not in visible_slots:
+                del popup._text_images[slot]
+        scrolling = popup.scroll_limit_y() > 0
+        for index in range(first, last):
+            row_y = top + (index - first) * row_height
             selected = index == node.selected
-            _canvas.create_rectangle(left, row_y, left + node.width, row_y + row_height,
+            _canvas.create_rectangle(left, row_y, right, row_y + row_height,
                                      fill=popup.selected_color('bg', '#476582') if selected else background,
                                      outline='#888888')
-            _draw_text(popup, left + 8, row_y + row_height / 2, option,
+            _draw_text(popup, left + 8, row_y + row_height / 2, node.options[index],
                        popup.selected_color('fg', '#ffffff') if selected else popup.fg,
-                       popup.font, anchor='w', width=max(1, node.width - 16), slot=f'row{index}')
+                       popup.font, anchor='w', width=max(1, popup.width - (24 if scrolling else 16)),
+                       slot=f'row{index}')
             choice = obj()
+            choice.parent = popup
             choice.add_flag(obj.FLAG.CLICKABLE)
             choice.click = lambda n=node, i=index: n.select(i)
-            if row_y < _screen.height:
-                hits.append((left, row_y, min(_screen.width, left + node.width),
-                             min(_screen.height, row_y + row_height), choice))
+            hits.append((left, row_y, right, row_y + row_height, choice))
+        if scrolling:
+            thumb_height = max(16, popup.height * popup.height / (len(node.options) * row_height))
+            thumb_top = top + (popup.height - thumb_height) * popup.scroll_y / popup.scroll_limit_y()
+            _canvas.create_rectangle(right - 7, top + 2, right - 2, bottom - 2,
+                                     fill='#888888', outline='')
+            _canvas.create_rectangle(right - 7, thumb_top, right - 2, thumb_top + thumb_height,
+                                     fill=popup.fg, outline='')
     return hits
 
 

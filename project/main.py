@@ -13,12 +13,16 @@ if (
         / "t4s3-simulator"
     )
 
+    command = (
+        ["cmd.exe", "/d", "/c", "Launch.cmd"]
+        if sys.platform == "win32"
+        else ["sh", "Launch.command"]
+    )
+
     raise SystemExit(
-        subprocess.call(
-            ["cmd.exe", "/d", "/c", "Launch.cmd"],
-            cwd=str(simulator_dir),
-        )
-    ) # Runs the simulator on RUN
+        subprocess.call(command, cwd=str(simulator_dir))
+    )  # Runs the simulator on RUN
+import json
 import time # Provide timing and delay functions
 
 import lvgl as lv # Import the LVGL graphics library # pylint: disable=import-error
@@ -33,7 +37,7 @@ from data import read_data # Load the data-processing module
 
 import fs_driver # pylint: disable=import-error
 
-VERSION = 0.4 # Version-control
+VERSION = 0.5 # Version-control
 
 class Application:
     """Class for application"""
@@ -56,24 +60,9 @@ class Application:
         self.default_stop = "Campus Gräsvik"
         self.default_transport_type = "BUS"
         self.refresh_started: int = -100000
-        self.STOPS = {
-                        "BUS":{
-                            "Campus Gräsvik": "740032188",
-                            "Karlskrona Centralstation": "740000230",
-                            "Bergåsa Station": "740001537"
-                        },
-                        "TRAIN":{
-                            "Karlskrona Centralstation": "740000230",
-                            "Bergåsa Station": "740001537"
-                        },
-                        "FERRY":{
-                        },
-                        "ALL":{
-                            "Campus Gräsvik": "740032188",
-                            "Karlskrona Centralstation": "740000230",
-                            "Bergåsa Station": "740001537"
-                        }
-                    }
+        module_dir = __file__.replace("\\", "/").rpartition("/")[0] or "."
+        with open(module_dir + "/STOPS.json", "r", encoding="utf-8") as file:
+            self.STOPS = json.load(file)
         self.wifi_name: str = self.connect_wifi() or "Offline"
         self.create_ui() # Function to trigger creation of UI
         log("student application ready")
