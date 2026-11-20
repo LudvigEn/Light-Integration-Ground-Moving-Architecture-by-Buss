@@ -29,6 +29,7 @@ jobs:
         shell: python
         env:
           TRAFIKLAB_API_KEY: ${{ secrets.TRAFIKLAB_API_KEY }}
+          RESROBOT_API_KEY: ${{ secrets.RESROBOT_API_KEY }}
         run: |
           import os
           from pathlib import Path
@@ -37,9 +38,16 @@ jobs:
           if not key:
             raise SystemExit("Missing TRAFIKLAB_API_KEY repository secret")
 
+          resrobot_key = os.environ.get("RESROBOT_API_KEY", "")
+
+          credentials = (
+              "TRAFIKLAB_API_KEY = " + repr(key) + "\n"
+              + "RESROBOT_API_KEY = " + repr(resrobot_key) + "\n"
+          )
+
           Path("project/secrets.py").write_text(
-            "API_KEY = " + repr(key) + "\n",
-            encoding="utf-8",
+              credentials,
+              encoding="utf-8",
           )
       - name: Discover individual tests
         id: discovery
@@ -108,9 +116,16 @@ jobs:
           if not key:
             raise SystemExit("Missing TRAFIKLAB_API_KEY repository secret")
 
+          resrobot_key = os.environ.get("RESROBOT_API_KEY", "")
+
+          credentials = (
+              "TRAFIKLAB_API_KEY = " + repr(key) + "\n"
+              + "RESROBOT_API_KEY = " + repr(resrobot_key) + "\n"
+          )
+
           Path("project/secrets.py").write_text(
-            "API_KEY = " + repr(key) + "\n",
-            encoding="utf-8",
+              credentials,
+              encoding="utf-8",
           )
       - name: Run individual test
         env:

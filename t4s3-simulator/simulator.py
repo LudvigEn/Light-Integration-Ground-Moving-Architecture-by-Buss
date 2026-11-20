@@ -26,6 +26,7 @@ import lvgl_sim as lv
 
 DEFAULT_IMAGE = Path(__file__).resolve().parent.parent / 'device-build' / 't4s3-vfs.img'
 DEPLOY_IMAGE = DEFAULT_IMAGE.with_name('t4s3-vfs-deploy.img')
+LOCAL_IMAGE = Path(__file__).resolve().with_name('t4s3-vfs.img')
 DEFAULT_STATE = Path(__file__).resolve().parent / '.state'
 
 
@@ -80,8 +81,10 @@ class Requests(ModuleType):
         if not self.network.station.isconnected():
             raise OSError('Simulated Wi-Fi is disconnected')
         if self.local_data():
-            with open(self.root / 'test_data' / 'stop_740032188_formatted.json',
-                      encoding='utf-8') as stream:
+            sample = self.root / 'test_data' / 'stop_740032188_formatted.json'
+            if not sample.is_file():
+                sample = Path(__file__).with_name('test-data') / sample.name
+            with open(sample, encoding='utf-8') as stream:
                 payload = json.load(stream)
             # Use a new payload on every call; no API requests or keys needed.
             response = ModuleType('response')
@@ -95,10 +98,17 @@ class Requests(ModuleType):
 class Network(ModuleType):
     STA_IF = 0
     AP_IF = 1
+    STAT_IDLE = 0
+    STAT_CONNECTING = 1
+    STAT_GOT_IP = 3
+    STAT_WRONG_PASSWORD = -3
+    STAT_NO_AP_FOUND = -2
+    STAT_CONNECT_FAIL = -1
 
-    def __init__(self, online):
+    def __init__(self, online, available_ssids=None):
         super().__init__('network')
         self.online = online
+        self.available_ssids = set(available_ssids) if available_ssids is not None else None
         self.station = self.Station(self)
 
     def WLAN(self, interface=0):
@@ -111,6 +121,8 @@ class Network(ModuleType):
             self.network = network
             self.enabled = False
             self.connected = False
+            self.ssid = None
+            self.reconnects = -1
 
         def active(self, value=None):
             if value is not None:
@@ -120,16 +132,26 @@ class Network(ModuleType):
             return self.enabled
 
         def connect(self, ssid, password=None):
-            self.connected = self.enabled
+            self.ssid = ssid
+            available = self.network.available_ssids
+            self.connected = self.enabled and (available is None or ssid in available)
+            if self.enabled and available is not None and ssid not in available:
+                raise OSError(f'Simulated Wi-Fi network is unavailable: {ssid}')
+
+        def config(self, *, reconnects):
+            self.reconnects = reconnects
 
         def disconnect(self):
             self.connected = False
+            self.ssid = None
 
         def isconnected(self):
             return self.enabled and self.connected and self.network.online
 
         def status(self):
-            return 3 if self.isconnected() else 0
+            if not self.enabled or self.ssid is None:
+                return self.network.STAT_IDLE
+            return self.network.STAT_GOT_IP if self.isconnected() else self.network.STAT_NO_AP_FOUND
 
         def ifconfig(self):
             return ('192.0.2.2', '255.255.255.0', '192.0.2.1', '192.0.2.1')
@@ -211,16 +233,18 @@ def runtime(root, network, local_data=lambda: False):
 
 class Simulator:
     def __init__(self, source=None, offline=False, hidden=False, local_data=False,
-                 state_dir=None):
+                 state_dir=None, wifi_ssid=None):
         self.source = (Path(source).resolve() if source else
+                       LOCAL_IMAGE if LOCAL_IMAGE.is_file() else
                        DEFAULT_IMAGE if DEFAULT_IMAGE.is_file() else
+                       LOCAL_IMAGE.with_name(DEPLOY_IMAGE.name) if LOCAL_IMAGE.with_name(DEPLOY_IMAGE.name).is_file() else
                        DEPLOY_IMAGE if DEPLOY_IMAGE.is_file() else None)
         self.window = tk.Tk()
         self.window.title('LilyGO T4-S3 • Python application simulator')
         self.window.resizable(False, False)
         if hidden:
             self.window.withdraw()
-        self.network = Network(not offline)
+        self.network = Network(not offline, (wifi_ssid,) if wifi_ssid else None)
         # Resolve before runtime() changes cwd to the extracted device image.
         self.state_dir = Path(state_dir).resolve() if state_dir is not None else DEFAULT_STATE
         self.temp = tempfile.TemporaryDirectory(prefix='t4s3-sim-')
@@ -232,8 +256,9 @@ class Simulator:
         self.hits = []
         self.press = (0, 0)
         self.drag_mode = None
-        self.drag_tile = None
+        self.drag_target = None
         self.drag_scroll_y = 0
+        self.popup_active = False
         toolbar = ttk.Frame(self.window, padding=8)
         toolbar.pack(fill='x')
         ttk.Button(toolbar, text='Open image…', command=self.choose).pack(side='left')
@@ -243,6 +268,12 @@ class Simulator:
                         command=lambda: setattr(self.network, 'online', self.online.get())).pack(side='left')
         self.local_data = tk.BooleanVar(value=local_data)
         ttk.Checkbutton(toolbar, text='Local test data', variable=self.local_data).pack(side='left')
+        wifi_options = ttk.Frame(self.window, padding=(8, 0, 8, 4))
+        wifi_options.pack(fill='x')
+        ttk.Label(wifi_options, text='Available SSID:').pack(side='left')
+        self.wifi_ssid = tk.StringVar(value=wifi_ssid or '')
+        ttk.Entry(wifi_options, textvariable=self.wifi_ssid, width=24).pack(side='left', padx=6)
+        ttk.Label(wifi_options, text='Blank accepts any; apply with Reset / Reload').pack(side='left')
         self.canvas = tk.Canvas(self.window, width=600, height=450, highlightthickness=0, bg='black')
         self.canvas.pack(padx=16, pady=8)
         lv.setup(self.canvas)
@@ -280,7 +311,9 @@ class Simulator:
 
     def choose(self):
         filename = filedialog.askopenfilename(
-            initialdir=str(DEFAULT_IMAGE.parent),
+            initialdir=str(self.source.parent if self.source else
+                           DEFAULT_IMAGE.parent if DEFAULT_IMAGE.parent.is_dir() else
+                           Path(__file__).resolve().parent),
             initialfile=DEFAULT_IMAGE.name,
             filetypes=[('Filesystem image', '*.img'), ('All files', '*.*')],
         )
@@ -298,6 +331,8 @@ class Simulator:
             command.append('--offline')
         if self.local_data.get():
             command.append('--local-data')
+        if self.wifi_ssid.get():
+            command.extend(['--wifi-ssid', self.wifi_ssid.get()])
         command.extend(['--state-dir', str(self.state_dir.resolve())])
         self.close()
         subprocess.Popen(command, cwd=str(Path(__file__).resolve().parent))
@@ -400,24 +435,32 @@ class Simulator:
         self.canvas.focus_set()
         self.press = (event.x, event.y)
         self.drag_mode = None
-        self.drag_tile = self.tile_at(event.x, event.y)
-        self.drag_scroll_y = self.drag_tile.get_scroll_y() if self.drag_tile else 0
+        self.drag_target = self.scroll_target_at(event.x, event.y)
+        self.drag_scroll_y = self.drag_target.get_scroll_y() if self.drag_target else 0
+        self.popup_active = any(isinstance(hit[-1], lv._DropdownList) for hit in self.hits)
 
-    def tile_at(self, x, y):
+    def scroll_target_at(self, x, y):
         for x1, y1, x2, y2, node in reversed(self.hits):
-            if hasattr(node, 'coord') and x1 <= x < x2 and y1 <= y < y2:
-                return node
+            if x1 <= x < x2 and y1 <= y < y2:
+                while node is not None:
+                    if isinstance(node, lv._DropdownList) or hasattr(node, 'coord'):
+                        return node
+                    node = node.parent
+                # A popup's dismissal layer blocks the underlying page.
+                return None
         return None
 
     def drag(self, event):
         dx, dy = event.x - self.press[0], event.y - self.press[1]
         if self.drag_mode is None and max(abs(dx), abs(dy)) >= 8:
-            if abs(dy) > abs(dx) and self.drag_tile and self.drag_tile.can_scroll_y(-dy):
+            if abs(dy) > abs(dx) and self.drag_target and self.drag_target.can_scroll_y(-dy):
                 self.drag_mode = 'scroll'
+            elif self.popup_active:
+                self.drag_mode = 'popup'
             else:
                 self.drag_mode = 'swipe'
         if self.drag_mode == 'scroll':
-            self.invoke(lambda: self.drag_tile.scroll_to_y(self.drag_scroll_y - dy))
+            self.invoke(lambda: self.drag_target.scroll_to_y(self.drag_scroll_y - dy))
 
     def wheel(self, event, delta=None):
         if delta is None:
@@ -425,15 +468,15 @@ class Simulator:
             if not raw:
                 return
             delta = -raw / 120 * 60 if abs(raw) >= 120 else -raw * 3
-        tile = self.tile_at(event.x, event.y)
-        if tile and tile.can_scroll_y(delta):
-            self.invoke(lambda: tile.scroll_to_y(tile.get_scroll_y() + delta))
+        target = self.scroll_target_at(event.x, event.y)
+        if target and target.can_scroll_y(delta):
+            self.invoke(lambda: target.scroll_to_y(target.get_scroll_y() + delta))
         return 'break'
 
     def up(self, event):
         self.drag(event)
         dx, dy = event.x - self.press[0], event.y - self.press[1]
-        if self.drag_mode == 'scroll':
+        if self.drag_mode in ('scroll', 'popup'):
             self.drag_mode = None
             return
         if max(abs(dx), abs(dy)) >= 50:
@@ -469,6 +512,7 @@ def main():
     parser.add_argument('--offline', action='store_true', help='Simulate Wi-Fi connection failure')
     parser.add_argument('--local-data', action='store_true', help='Serve bundled departure test data instead of calling the live API')
     parser.add_argument('--state-dir', type=Path, default=DEFAULT_STATE, help='Directory for saved simulated settings')
+    parser.add_argument('--wifi-ssid', help='Only this SSID is available to simulated Wi-Fi (default: accept any)')
     parser.add_argument('--list', action='store_true', help='List image files without executing them')
     args = parser.parse_args()
     if args.list:
@@ -477,7 +521,8 @@ def main():
         for name, content in FatImage(args.image).files().items():
             print('%8d  %s' % (len(content), name))
         return
-    app = Simulator(args.image, args.offline, local_data=args.local_data, state_dir=args.state_dir)
+    app = Simulator(args.image, args.offline, local_data=args.local_data, state_dir=args.state_dir,
+                    wifi_ssid=args.wifi_ssid)
     app.window.after(50, app.boot)
     app.window.mainloop()
 
