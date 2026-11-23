@@ -445,6 +445,18 @@ class Application:
             lv.EVENT.VALUE_CHANGED, # When a value is changed
             None
         )
+        
+        def search_in_dropdown(self):
+            database = "STOPS.json"
+            with open(database, 'r', encoding='utf-8') as f:
+                data = json.loads(f.read())
+            while True:
+                user  = input("Type in your destination\n")
+                for destination in data[selected_transport_type].keys():
+                    if destination.lower() == user.lower():
+                        break
+                if destination.lower() != user.lower():
+                    print("\n\n\n\n\n\n\nPlace do not exist\n")
 
         # STOP SELECTOR
         stop_label = lv.label(self.settings_screen)
