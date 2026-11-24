@@ -44,34 +44,38 @@ class Application:
     def __init__(self):
         print("Starting application")
         self.display, self.touch, self.handler = start_board()
-        self.image_fs = lv.fs_drv_t()
-        fs_driver.fs_register(self.image_fs, "S")
-        self.qr_image = None
-        self.font_16 = lv.binfont_create("S:/fonts/transit_16.bin")
-        self.font_16.fallback = lv.font_montserrat_16
-        self.font_28 = lv.binfont_create("S:/fonts/transit_28.bin")
-        self.font_28.fallback = lv.font_montserrat_28
-        self.icon_font_32 = lv.binfont_create("S:/fonts/transit_icons_32.bin")
+        self.image_fs = lv.fs_drv_t() # Image-handler
+        fs_driver.fs_register(self.image_fs, "S") # Image-handler
+        self.qr_image = None # QR-code for Trafiklab terms-of-use
+        self.font_16 = lv.binfont_create("S:/fonts/transit_16.bin") # Our custom 16-size font (so åäö works)
+        self.font_16.fallback = lv.font_montserrat_16 # If our custom font doesn't have the character, use this instead
+        self.font_28 = lv.binfont_create("S:/fonts/transit_28.bin") # Our custom 28-size font (so åäö works)
+        self.font_28.fallback = lv.font_montserrat_28 # If our custom font doesn't have the character, use this instead
+        self.icon_font_32 = lv.binfont_create("S:/fonts/transit_icons_32.bin") # This is for the bus, train and ferry icons.
         self.dark_mode = True # Dark mode toggle, default on
         self.backgrounds = [] # List of all backgrounds, for toggling dark-mode
         self.borders = [] # List of all borders (like around boxes), for toggling dark-mode
         self.labels = [] # List of all labels, for toggling dark-mode
         self.controls = [] # List of all controls (buttons/dropdowns), for toggling dark-mode
-        self.default_stop = "Campus Gräsvik"
-        self.default_transport_type = "BUS"
-        self.refresh_started: int = -100000
-        module_dir = __file__.replace("\\", "/").rpartition("/")[0] or "."
+        self.journey_from: str = "Campus Gräsvik" # Default-value, also the one being passed on to other functions
+        self.journey_to: str = "Landsvägsgatan" # Default-value, also the one being passed on to other functions
+        self.journeys: list = None # List of possible Journeys to reach destination, empty by default
+        self.default_stop = "Campus Gräsvik" # Default-value, also the one being passed on to other functions
+        self.default_transport_type = "BUS" # Default-value, also the one being passed on to other functions
+        self.refresh_started: int = -100000 # Default-value, also serves the countdown to auto-refresh
+        self.departure_timer = None
+        self.q_time = None
+        module_dir = __file__.replace("\\", "/").rpartition("/")[0] or "." # Relative file-path to find STOPS.json
         with open(module_dir + "/STOPS.json", "r", encoding="utf-8") as file:
-            self.STOPS = json.load(file)
+            self.STOPS = json.load(file) # File with all stops
         self.wifi_name: str = self.connect_wifi() or "Offline"
         self.create_ui() # Function to trigger creation of UI
         log("student application ready")
 
-
-        """Function: runs the """
-
     def save_settings(self):
-        """Function: Save settings to file."""
+        """Function: Save settings to file.
+        When saving new settings, overwrite the old settings.txt.
+        """
         with open("settings.txt", "w", encoding="utf-8") as file:
             to_write = f"{self.default_stop}\n{self.default_transport_type}\n{self.dark_mode}"
             file.write(to_write)
@@ -80,12 +84,16 @@ class Application:
 
     def reset_settings(self):
         """Function to reset settings by reloading setting screen"""
-        self.create_ui()
-        self.tileview.set_tile(self.settings_screen, False)
+        log("Reset Settings called")
+        self.read_settings() # Fetch saved settings
+        self.destroy_screen(self.settings_screen) # Destroy and...
+        self.create_settings_screen() # ...rebuild the settings-screen
+        self.tileview.set_tile(self.settings_screen, False) # And move to that screen
+        self.apply_colors() # And apply proper color-scheme
 
     def read_settings(self):
         """If a settings.txt file is present, read the data from it
-        If there are not 3 lines of text in it; revert to defaults
+        If there are not 3 lines of text in it; revert to some defaults
         """
         try:
             with open("settings.txt", "r", encoding="utf-8") as file:
@@ -98,10 +106,117 @@ class Application:
             log(log_file_error)
             return
 
-        self.default_stop = lines[0]
-        self.default_transport_type = lines[1]
-        self.dark_mode = lines[2] == "True"
+        self.default_stop = lines[0] # The Default-stop is the first line in the settings-file
+        self.default_transport_type = lines[1] # The Default-transport-type is the second line in the settings-file
+        self.dark_mode = lines[2] == "True" # Dark mode is the third line
 
+    def open_search(self, dropdown):
+        """Run on Search-button pressed"""
+        font = self.font_16
+        dropdown.close()
+        names = dropdown.get_options().splitlines()
+        index = dropdown.get_selected()
+        selected = names[index] if 0 <= index < len(names) else None
+
+        # POP-UP-PANEL
+        panel = lv.obj(lv.screen_active())
+        panel.set_pos(0, 0)
+        panel.set_size(600, 450)
+        panel.set_style_pad_all(0, 0)
+        panel.remove_flag(lv.obj.FLAG.SCROLLABLE)
+        panel.add_flag(lv.obj.FLAG.CLICKABLE)
+        panel.set_style_bg_color(lv.color_hex(0x000000), 0)
+        panel.set_style_bg_opa(lv.OPA.COVER, 0)
+        panel.set_style_text_color(lv.color_hex(0xFFFFFF), 0)
+        panel.set_style_text_font(font, 0)
+
+        # INPUT-TEXT-FIELD
+        field = lv.textarea(panel)
+        field.set_one_line(True)
+        field.set_pos(20, 20)
+        field.set_size(560, 42)
+        field.set_max_length(60)
+        field.set_style_bg_color(lv.color_hex(0x000000), 0)
+        field.set_placeholder_text("Search stop...")
+        field.set_text("")
+
+        # RESULTING DROPDOWN
+        results = lv.dropdown(panel)
+        results.set_pos(20, 80)
+        results.set_width(560)
+        results.set_style_text_font(font, 0)
+        results.set_style_bg_color(lv.color_hex(0x000000), 0)
+        results.get_list().set_style_text_font(font, 0)
+        results.get_list().set_style_max_height(80, 0)
+
+        # status = lv.label(panel)
+        # status.set_pos(20, 130)
+        # status.set_width(560)
+
+        keys = lv.keyboard(panel)
+        keys.set_pos(0, 210)
+        keys.set_size(600, 240)
+        keys.set_style_text_font(font, lv.PART.ITEMS)
+        keys.set_style_bg_color(lv.color_hex(0x000000), 0)
+        key_map = list("qwertyuiopå") + ["\n"] + list("asdfghjklöä") + ["\n"]
+        key_map += list("zxcvbnm-") + [lv.SYMBOL.BACKSPACE, "\n"]
+        key_map += [lv.SYMBOL.CLOSE, lv.SYMBOL.LEFT, " ", lv.SYMBOL.RIGHT, lv.SYMBOL.OK, ""]
+        controls = [4 if key == " " else 1 for key in key_map if key not in ("", "\n")]
+        keys.set_map(lv.keyboard.MODE.USER_1, key_map, controls)
+        keys.set_mode(lv.keyboard.MODE.USER_1)
+        keys.set_textarea(field)
+
+        def normalize(text):
+            """Replaces text with lower-cases, to avoid case-matching"""
+            return (
+                text.replace("Å", "å")
+                .replace("Ä", "ä")
+                .replace("Ö", "ö")
+                .lower()
+            )
+
+        def filter_names(_event=None):
+            query = normalize(field.get_text().strip())
+            matches = [
+                name for name in names
+                if query in normalize(name)
+            ]
+            results.set_options("\n".join(matches))
+
+            if matches:
+                results.remove_state(lv.STATE.DISABLED)
+                results.set_selected(
+                    matches.index(selected) if selected in matches else 0
+                )
+                # status.set_text(f"{len(matches)} matching stops")
+            else:
+                results.add_state(lv.STATE.DISABLED)
+                # status.set_text("No matching stops")
+        field.add_event_cb(
+            filter_names,
+            lv.EVENT.VALUE_CHANGED,
+            (key_map, controls),
+        )
+
+        filter_names()
+
+        def close_search(_event):
+            filtered_names = results.get_options().splitlines()
+            index = results.get_selected()
+
+            if not 0 <= index < len(filtered_names):
+                return
+            chosen = filtered_names[index]
+            dropdown.set_selected(names.index(chosen))
+            dropdown.send_event(lv.EVENT.VALUE_CHANGED, None)
+            keys.set_textarea(None)
+            panel.delete()
+
+        field.add_event_cb(
+            close_search,
+            lv.EVENT.READY,
+            None
+        )
 
     def apply_colors(self, screen="All"):
         """Function: Applies black/white to all elements depending on if Dark Mode is enabled or not"""
@@ -560,11 +675,11 @@ class Application:
     def create_journey_screen(self):
         self.journey_screen = self.tileview.add_tile(0, 0, lv.DIR.RIGHT)
         self.journey_screen_label = lv.label(self.journey_screen)
-        self.journey_screen_label.set_text("Reseskärm") 
+        self.journey_screen_label.set_text("Reseskärm")
         self.journey_screen_label.align(lv.ALIGN.CENTER, 0, -180)
         self.backgrounds.append(self.journey_screen)
-        self.labels.append(self.journey_screen_label)                                               
-        
+        self.labels.append(self.journey_screen_label)
+
     def create_ui(self):
         'Function: Creates UI'
         #api_data = read_data(False) ## IF TRUE, ONLY USE TEST-DATA INSTEAD (i.e. don't use ACTUAL data)
