@@ -50,6 +50,11 @@ The same Terminal commands also work on Linux with Tkinter installed.
 
 ## Application image
 
+From a repository checkout, use **Run Python File** on `project/main.py` in
+VS Code to build the application image with PlatformIO and then launch the
+simulator. PlatformIO must be installed, along with the simulator dependencies
+described in this README. If the build fails, the simulator does not start.
+
 In VS Code, run **PlatformIO > Project Tasks > t4s3-micropython > Custom >
 Build Python application** to generate `device-build/t4s3-vfs.img` without
 flashing a board. The simulator automatically opens this image when present.
@@ -72,6 +77,48 @@ click to touch. Open dropdown lists stay within the display: use the mouse wheel
 or drag vertically inside the popup to reach more options. A scrollbar shows
 your position, and reopening the list brings the selected option into view.
 Arrow keys also switch tiles.
+
+`screen.invalidate()` queues a redraw, including visible child widgets. The
+next simulator refresh pass draws it even when no application timers are due.
+`lv.refr_now(None)` redraws immediately and flushes the Tk canvas without
+running application events or timers. The simulator repaints the full canvas
+rather than tracking individual dirty rectangles. These calls do not reload
+settings, fetch data, rebuild widgets, or copy Python attributes into controls.
+
+Tabs in bitmap-font text use LVGL's two-space glyph advance, including when
+the space comes from a fallback font. They do not use editor-style tab stops.
+
+## Searchable stop selectors
+
+The simulator supports `lv.textarea`, `lv.keyboard`, custom keyboard maps,
+READY/CANCEL events, and bounded dropdown lists for touch search popups. Tap a
+text field to edit it using the on-screen keyboard or your computer keyboard.
+Left/Right move the text cursor while editing; Enter confirms and Escape cancels.
+
+Try the three-selector example from a repository checkout, without modifying
+or rebuilding the device application:
+
+```powershell
+python t4s3-simulator/search_demo.py
+```
+
+Use the same Python environment as the simulator (Python 3.10+, Tkinter and
+Pillow). On macOS/Linux use `python3`, or your simulator virtual environment.
+Tap **Find** beside Stop, From or To. Type a name (the touch layout includes
+å, ä, ö), open the filtered list, choose a result, and confirm with the tick.
+The cross cancels; an empty result set cannot be confirmed. Long result lists
+scroll within their popup above the keyboard.
+
+The reusable LVGL example is in `search_dropdown.py`. It uses the current
+options of each dropdown when opened, preserves the full list, and sends
+VALUE_CHANGED only after confirmation so existing selection callbacks work.
+This is an example for you to apply to the device app; it is not automatically
+injected into application images. The demo reads the repository's stop list
+and custom font and does not make API requests.
+
+The input implementation covers the one-line search workflow, basic cursor
+editing and custom key widths. Password modes, text selection, custom
+button-matrix control flags and keyboard key popovers are not implemented.
 
 ## Testing WIFI_LIST
 

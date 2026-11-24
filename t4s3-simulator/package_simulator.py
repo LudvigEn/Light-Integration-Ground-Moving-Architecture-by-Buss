@@ -8,7 +8,7 @@ SOURCE = Path(__file__).resolve().parent
 RUNTIME_FILES = (
     'Launch.cmd', 'Launch.command', 'README.md', 'requirements.txt',
     'simulator.py', 'lvgl_sim.py', 'fat_image.py', 'font_sim.py',
-    'fs_driver_sim.py', 'timer_sim.py',
+    'fs_driver_sim.py', 'timer_sim.py', 'search_dropdown.py',
     'test-data/stop_740032188_formatted.json',
     'fonts/symbols.json', 'fonts/README.md',
     'fonts/LICENSE-Montserrat.txt', 'fonts/LICENSE-Font-Awesome.txt',

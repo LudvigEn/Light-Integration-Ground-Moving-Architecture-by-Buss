@@ -216,6 +216,47 @@ class TimerLoopTests(unittest.TestCase):
             self.assertEqual(values, [1000])
             refresh.assert_called_once()
 
+    def test_invalidation_repaints_children_without_application_timers(self):
+        container = lv.obj(lv.screen_active())
+        caption = lv.label(container)
+        caption.set_text('Before')
+        self.app.refresh()
+        caption.set_text('After')
+        with patch.object(self.app, 'refresh', wraps=self.app.refresh) as refresh:
+            container.invalidate()
+            refresh.assert_not_called()
+            self.pump()
+            refresh.assert_called_once()
+            self.pump()
+            refresh.assert_called_once()
+        texts = [self.app.canvas.itemcget(item, 'text') for item in self.app.canvas.find_all()
+                 if self.app.canvas.type(item) == 'text']
+        self.assertIn('After', texts)
+        self.assertNotIn('Before', texts)
+
+    def test_immediate_refresh_updates_canvas_and_touch_targets_inside_callback(self):
+        control = lv.button(lv.screen_active())
+        control.set_pos(10, 10)
+        caption = lv.label(control)
+        caption.set_text('Before')
+        self.app.refresh()
+        timer_callback = Mock()
+        lv.timer_create(timer_callback, 0, None)
+        def update():
+            control.set_pos(200, 100)
+            caption.set_text('After')
+            lv.screen_active().invalidate()
+            lv.refr_now(None)
+            self.assertTrue(any(hit[0] == 200 and hit[1] == 100 and hit[-1] is control
+                                for hit in self.app.hits))
+            texts = [self.app.canvas.itemcget(item, 'text') for item in self.app.canvas.find_all()
+                     if self.app.canvas.type(item) == 'text']
+            self.assertIn('After', texts)
+            self.assertNotIn('Before', texts)
+            timer_callback.assert_not_called()
+        self.app.invoke(update)
+        self.assertNotIn('callback failed', self.app.status.get())
+
     def test_boot_starts_application_timers_automatically(self):
         self.app.context.__exit__(None, None, None)
         self.app.context = None
