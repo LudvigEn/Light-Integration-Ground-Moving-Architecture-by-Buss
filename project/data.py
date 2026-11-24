@@ -128,11 +128,9 @@ class Journey:
             return NotImplemented
 
         return (
-            self.duration,
-            self.departure_time_seconds,
+            self.arrival_time_seconds
         ) < (
-            other.duration,
-            other.departure_time_seconds
+            other.arrival_time_seconds
         )
 
 
