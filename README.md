@@ -1,3 +1,18 @@
+# L.I.G.M.A.B
+
+## Application Overview
+
+Is a device that helps the user find different stops and routes by bus, train and boat in karlskrona to help the user travel with public transport.
+
+## Application Features
+
+## Screen Descriptions
+
+## Navigation
+
+## Trafiklab API Integration
+
+
 # ESP32-T4-S3-MicroPython-Template
 
 Welcome to the lab using the ESP32-T4-S3 LilyGO!
@@ -148,5 +163,6 @@ baud and also stored as `/debug.log` on the device.
 ## LilyGo tutorial
 
 Visit LilyGO [link](https://github.com/Xinyuan-LilyGO/LilyGo-AMOLED-Series)
+
 
 
