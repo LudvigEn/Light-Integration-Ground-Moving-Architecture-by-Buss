@@ -133,6 +133,114 @@ class Application:
         self.default_transport_type = lines[1]
         self.dark_mode = lines[2] == "True"
 
+    def open_search(self, dropdown):
+        """Run on Search-button pressed"""
+        font = self.font_16
+        dropdown.close()
+        names = dropdown.get_options().splitlines()
+        index = dropdown.get_selected()
+        selected = names[index] if 0 <= index < len(names) else None
+
+        # POP-UP-PANEL
+        panel = lv.obj(lv.screen_active())
+        panel.set_pos(0, 0)
+        panel.set_size(600, 450)
+        panel.set_style_pad_all(0, 0)
+        panel.remove_flag(lv.obj.FLAG.SCROLLABLE)
+        panel.add_flag(lv.obj.FLAG.CLICKABLE)
+        panel.set_style_bg_color(lv.color_hex(0x000000), 0)
+        panel.set_style_bg_opa(lv.OPA.COVER, 0)
+        panel.set_style_text_color(lv.color_hex(0xFFFFFF), 0)
+        panel.set_style_text_font(font, 0)
+
+        # INPUT-TEXT-FIELD
+        field = lv.textarea(panel)
+        field.set_one_line(True)
+        field.set_pos(20, 20)
+        field.set_size(560, 42)
+        field.set_max_length(60)
+        field.set_style_bg_color(lv.color_hex(0x000000), 0)
+        field.set_placeholder_text("Search stop...")
+        field.set_text("")
+
+        # RESULTING DROPDOWN
+        results = lv.dropdown(panel)
+        results.set_pos(20, 80)
+        results.set_width(560)
+        results.set_style_text_font(font, 0)
+        results.set_style_bg_color(lv.color_hex(0x000000), 0)
+        results.get_list().set_style_text_font(font, 0)
+        results.get_list().set_style_max_height(80, 0)
+
+        # status = lv.label(panel)
+        # status.set_pos(20, 130)
+        # status.set_width(560)
+
+        keys = lv.keyboard(panel)
+        keys.set_pos(0, 210)
+        keys.set_size(600, 240)
+        keys.set_style_text_font(font, lv.PART.ITEMS)
+        keys.set_style_bg_color(lv.color_hex(0x000000), 0)
+        key_map = list("qwertyuiopå") + ["\n"] + list("asdfghjklöä") + ["\n"]
+        key_map += list("zxcvbnm-") + [lv.SYMBOL.BACKSPACE, "\n"]
+        key_map += [lv.SYMBOL.CLOSE, lv.SYMBOL.LEFT, " ", lv.SYMBOL.RIGHT, lv.SYMBOL.OK, ""]
+        controls = [4 if key == " " else 1 for key in key_map if key not in ("", "\n")]
+        keys.set_map(lv.keyboard.MODE.USER_1, key_map, controls)
+        keys.set_mode(lv.keyboard.MODE.USER_1)
+        keys.set_textarea(field)
+
+        def normalize(text):
+            """Replaces text with lower-cases, to avoid case-matching"""
+            return (
+                text.replace("Å", "å")
+                .replace("Ä", "ä")
+                .replace("Ö", "ö")
+                .lower()
+            )
+
+        def filter_names(_event=None):
+            query = normalize(field.get_text().strip())
+            matches = [
+                name for name in names
+                if query in normalize(name)
+            ]
+            results.set_options("\n".join(matches))
+
+            if matches:
+                results.remove_state(lv.STATE.DISABLED)
+                results.set_selected(
+                    matches.index(selected) if selected in matches else 0
+                )
+                # status.set_text(f"{len(matches)} matching stops")
+            else:
+                results.add_state(lv.STATE.DISABLED)
+                # status.set_text("No matching stops")
+        field.add_event_cb(
+            filter_names,
+            lv.EVENT.VALUE_CHANGED,
+            (key_map, controls),
+        )
+
+        filter_names()
+
+        def close_search(_event):
+            filtered_names = results.get_options().splitlines()
+            index = results.get_selected()
+
+            if not 0 <= index < len(filtered_names):
+                return
+            chosen = filtered_names[index]
+            dropdown.set_selected(names.index(chosen))
+            dropdown.send_event(lv.EVENT.VALUE_CHANGED, None)
+            keys.set_textarea(None)
+            panel.delete()
+
+        field.add_event_cb(
+            close_search,
+            lv.EVENT.READY,
+            None
+        )
+
     def apply_colors(self, screen="All"):
         """Function: Applies black/white to all elements depending on if Dark Mode is enabled or not"""
         background_color = lv.color_hex(0x000000 if self.dark_mode else 0xFFFFFF) # Background color, if Dark-mode: black, else white
@@ -539,7 +647,7 @@ class Application:
 
         stop_dropdown = lv.dropdown(self.settings_screen)
         stop_dropdown.set_pos(200, 140)
-        stop_dropdown.set_width(350)
+        stop_dropdown.set_width(300)
         stop_names = sorted(self.STOPS[self.default_transport_type])
         stop_dropdown.set_options("\n".join(stop_names))
 
@@ -567,6 +675,22 @@ class Application:
         for dropdown in (transport_type_dropdown, stop_dropdown):
             dropdown.set_style_text_font(self.font_16, 0)
             dropdown.get_list().set_style_text_font(self.font_16, 0)
+
+        # STOP FILTER
+        stop_filter = lv.button(self.settings_screen)
+        stop_filter.set_pos(500, 140)
+        stop_filter.set_size(50, 40)
+        stop_filter.set_style_border_width(2, 0)
+        self.borders.append(stop_filter)
+        stop_filter_label = lv.label(stop_filter)
+        stop_filter_label.set_text(lv.SYMBOL.KEYBOARD)
+        stop_filter_label.center()
+        self.controls.append(stop_filter)
+        stop_filter.add_event_cb(
+            lambda event: self.open_search(stop_dropdown),
+            lv.EVENT.CLICKED,
+            None
+        )
 
         # SAVE SETTINGS
         save_settings_button = lv.button(self.settings_screen)
@@ -662,7 +786,7 @@ class Application:
         # JOURNEY FROM DROPDOWN
         from_dropdown = lv.dropdown(self.journey_selection_screen)
         from_dropdown.set_pos(200, 150)
-        from_dropdown.set_width(325)
+        from_dropdown.set_width(275)
         from_dropdown.set_style_text_font(self.font_16, 0)
         from_dropdown.get_list().set_style_text_font(self.font_16, 0)
         from_names = sorted(self.STOPS["ALL"]) # List of names of stop, to be presented as options
@@ -688,7 +812,21 @@ class Application:
             lv.EVENT.VALUE_CHANGED, # When a value is changed
             None,
         )
-
+        # FROM STOP FILTER
+        from_stop_filter = lv.button(self.journey_selection_screen)
+        from_stop_filter.set_pos(475, 150)
+        from_stop_filter.set_size(50, 40)
+        from_stop_filter.set_style_border_width(2, 0)
+        self.borders.append(from_stop_filter)
+        from_stop_filter_label = lv.label(from_stop_filter)
+        from_stop_filter_label.set_text(lv.SYMBOL.KEYBOARD)
+        from_stop_filter_label.center()
+        self.controls.append(from_stop_filter)
+        from_stop_filter.add_event_cb(
+            lambda event: self.open_search(from_dropdown),
+            lv.EVENT.CLICKED,
+            None
+        )
         ## JOURNEY TO SELECTOR
         # JOURNEY LABEL
         to_label = lv.label(self.journey_selection_screen)
@@ -700,7 +838,7 @@ class Application:
         # JOURNEY TO DROPDOWN
         to_dropdown = lv.dropdown(self.journey_selection_screen)
         to_dropdown.set_pos(200, 250)
-        to_dropdown.set_width(325)
+        to_dropdown.set_width(275)
         to_dropdown.set_style_text_font(self.font_16, 0)
         to_dropdown.get_list().set_style_text_font(self.font_16, 0)
         to_names = sorted(self.STOPS["ALL"])
@@ -725,6 +863,21 @@ class Application:
             on_to_changed, # This is the function it will run.
             lv.EVENT.VALUE_CHANGED, # When a value is changed
             None,
+        )
+        # TO STOP FILTER
+        to_stop_filter = lv.button(self.journey_selection_screen)
+        to_stop_filter.set_pos(475, 250)
+        to_stop_filter.set_size(50, 40)
+        to_stop_filter.set_style_border_width(2, 0)
+        self.borders.append(to_stop_filter)
+        to_stop_filter_label = lv.label(to_stop_filter)
+        to_stop_filter_label.set_text(lv.SYMBOL.KEYBOARD)
+        to_stop_filter_label.center()
+        self.controls.append(to_stop_filter)
+        to_stop_filter.add_event_cb(
+            lambda event: self.open_search(to_dropdown),
+            lv.EVENT.CLICKED,
+            None
         )
         #### Add for potential Dark/Light mode
         self.backgrounds.append(self.journey_selection_screen)
