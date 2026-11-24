@@ -6,12 +6,31 @@ if (
     and "lvgl" not in sys.modules
 ):
     from pathlib import Path
+    from shutil import which
     import subprocess
 
-    simulator_dir = (
-        Path(__file__).resolve().parents[1]
-        / "t4s3-simulator"
+    project_dir = Path(__file__).resolve().parents[1]
+    simulator_dir = project_dir / "t4s3-simulator"
+
+    pio = which("pio") or which("platformio")
+    if pio is None:
+        pio = Path.home() / ".platformio" / "penv" / (
+            "Scripts/pio.exe" if sys.platform == "win32" else "bin/pio"
+        )
+        if not pio.is_file():
+            raise SystemExit(
+                "PlatformIO was not found. Install PlatformIO IDE in VS Code "
+                "or add the PlatformIO CLI to PATH."
+            )
+
+    print("Building Python application with PlatformIO...", flush=True)
+    build_result = subprocess.call(
+        [str(pio), "run", "--environment", "t4s3-micropython",
+         "--target", "build_app_fs"],
+        cwd=str(project_dir),
     )
+    if build_result:
+        raise SystemExit(build_result)
 
     command = (
         ["cmd.exe", "/d", "/c", "Launch.cmd"]
@@ -21,7 +40,7 @@ if (
 
     raise SystemExit(
         subprocess.call(command, cwd=str(simulator_dir))
-    )  # Runs the simulator on RUN
+    )  # Builds the application and runs the simulator on RUN
 import json
 import time # Provide timing and delay functions
 
