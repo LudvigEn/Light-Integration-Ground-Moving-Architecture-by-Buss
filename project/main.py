@@ -519,6 +519,24 @@ class Application:
             None,
         )
 
+         # LOAD BUTTON
+        load_settings_button = lv.button(self.settings_screen)
+        load_settings_button.set_pos(300, 200)
+        load_settings_button.set_size(200, 50)
+        load_settings_button.set_style_border_width(2, 0)
+        self.controls.append(load_settings_button)
+
+        load_settings_label = lv.label(load_settings_button)
+        load_settings_label.set_text("LOAD")
+        load_settings_label.center()
+        self.labels.append(load_settings_label)
+
+        reset_settings_button.add_event_cb(
+            lambda _event: self.refresh_departures(),
+            lv.EVENT.CLICKED,
+            None,
+        )
+
         # QR CODE
         legal_label = lv.label(self.settings_screen)
         legal_label.set_text("Trafiklab ToS")
