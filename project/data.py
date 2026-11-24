@@ -84,6 +84,28 @@ class Leg:
         else:
             return f"\t{self.departure_time[:-3]}- Walk {self.dist}m ({round(self.dist/self.duration, 1)}m/s) to {self.destination}"
 
+    def get_origin(self):
+        """Return Origin Stop"""
+        return self.origin
+
+    def get_destination(self):
+        """Return Destination Stop"""
+        return self.destination
+
+    def get_line(self):
+        """Return line (i.e. route)"""
+        return self.line
+
+    def get_duration(self):
+        """Return duration of leg (in seconds)"""
+        return self.duration
+
+    def get_distance(self):
+        """Return duration of leg (in seconds)"""
+        if self.walk is True:
+            return self.dist
+        else:
+            return None
 
 class Journey:
     """Data on Journey(Resa) -granularity"""
@@ -120,6 +142,9 @@ class Journey:
             msg += f"\n{leg}"
         return msg
 
+    def __repr__(self):
+        return str(self)
+
     def __int__(self):
         return self.duration
 
@@ -133,6 +158,25 @@ class Journey:
             other.arrival_time_seconds
         )
 
+    def get_departure_time(self):
+        """Returns time (as a string)"""
+        return self.departure_time
+
+    def get_arrival_time(self):
+        """Returns time (as a string)"""
+        return self.arrival_time
+
+    def get_origin(self):
+        """Returns Journey Origin"""
+        return self.origin
+
+    def get_destination(self):
+        """Returns Journey Destination"""
+        return self.destination
+
+    def get_legs(self):
+        """Returns Legs (part of Journey)"""
+        return self.legs
 
 def read_data(stop_id, test=False):
     """Function to connect to, and fetch API-data"""
