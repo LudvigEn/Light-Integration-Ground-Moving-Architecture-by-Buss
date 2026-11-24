@@ -102,7 +102,6 @@ class Application:
         self.default_transport_type = lines[1]
         self.dark_mode = lines[2] == "True"
 
-
     def apply_colors(self, screen="All"):
         """Function: Applies black/white to all elements depending on if Dark Mode is enabled or not"""
         background_color = lv.color_hex(0x000000 if self.dark_mode else 0xFFFFFF) # Background color, if Dark-mode: black, else white
