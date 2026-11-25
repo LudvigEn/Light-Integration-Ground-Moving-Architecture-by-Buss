@@ -171,14 +171,15 @@ class Application:
         results.get_list().set_style_text_font(self.font_16, 0)
         results.get_list().set_style_max_height(80, 0) # We can't fit more options with the keyboard in the way
 
-        # status = lv.label(panel)
-        # status.set_pos(20, 130)
-        # status.set_width(560)
+        # STATUS-PANEL
+        status = lv.label(panel)
+        status.set_pos(20, 130)
+        status.set_width(560)
 
         keys = lv.keyboard(panel) # Create a keyboard
         keys.set_size(600, 240) # Set size
         keys.align(lv.ALIGN.BOTTOM_MID, 0 ,0) # Anchor to bottom mid
-        keys.set_style_text_font(self.font_16, lv.PART.ITEMS) # Font of keys on keyboard
+        keys.set_style_text_font(self.font_16, lv.PART.ITEMS) # Font of keys on keyboard, lv.PART.ITEMS targets the keys (not the keyboard itself)
         keys.set_style_bg_color(lv.color_hex(0x000000), 0) # Black background
         key_map = list("qwertyuiopå") + ["\n"] + list("asdfghjklöä") + ["\n"] # First two row of letters
         key_map += list("zxcvbnm-") + [lv.SYMBOL.BACKSPACE, "\n"] # Third row of letters (and symbol)
@@ -210,10 +211,10 @@ class Application:
                 results.set_selected(
                     matches.index(selected) if selected in matches else 0
                 )
-                # status.set_text(f"{len(matches)} matching stops")
+                status.set_text(f"{len(matches)} matching stops")
             else:
                 results.add_state(lv.STATE.DISABLED)
-                # status.set_text("No matching stops")
+                status.set_text("No matching stops")
 
         self.search_keyboard_buffers = (key_map, controls)
         field.add_event_cb(
