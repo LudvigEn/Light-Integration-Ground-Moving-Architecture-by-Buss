@@ -922,7 +922,7 @@ class Application:
 
         # LOAD BUTTON
         load_journeys_button = lv.button(self.journey_selection_screen)
-        load_journeys_button.set_pos(357, 321)
+        load_journeys_button.set_pos(330, 321)
         load_journeys_button.set_size(200, 50)
         load_journeys_button.set_style_border_width(2, 0)
         self.controls.append(load_journeys_button)
