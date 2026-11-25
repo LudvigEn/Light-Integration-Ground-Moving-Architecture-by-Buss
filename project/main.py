@@ -135,7 +135,6 @@ class Application:
 
     def open_search(self, dropdown):
         """Run on Search-button pressed"""
-        font = self.font_16
         dropdown.close()
         names = dropdown.get_options().splitlines()
         index = dropdown.get_selected()
@@ -151,7 +150,7 @@ class Application:
         panel.set_style_bg_color(lv.color_hex(0x000000), 0)
         panel.set_style_bg_opa(lv.OPA.COVER, 0)
         panel.set_style_text_color(lv.color_hex(0xFFFFFF), 0)
-        panel.set_style_text_font(font, 0)
+        panel.set_style_text_font(self.font_16, 0)
 
         # INPUT-TEXT-FIELD
         field = lv.textarea(panel)
@@ -167,26 +166,26 @@ class Application:
         results = lv.dropdown(panel)
         results.set_pos(20, 80)
         results.set_width(560)
-        results.set_style_text_font(font, 0)
+        results.set_style_text_font(self.font_16, 0)
         results.set_style_bg_color(lv.color_hex(0x000000), 0)
-        results.get_list().set_style_text_font(font, 0)
-        results.get_list().set_style_max_height(80, 0)
+        results.get_list().set_style_text_font(self.font_16, 0)
+        results.get_list().set_style_max_height(80, 0) # We can't fit more options with the keyboard in the way
 
         # status = lv.label(panel)
         # status.set_pos(20, 130)
         # status.set_width(560)
 
-        keys = lv.keyboard(panel)
-        keys.set_pos(0, 210)
-        keys.set_size(600, 240)
-        keys.set_style_text_font(font, lv.PART.ITEMS)
-        keys.set_style_bg_color(lv.color_hex(0x000000), 0)
-        key_map = list("qwertyuiopå") + ["\n"] + list("asdfghjklöä") + ["\n"]
-        key_map += list("zxcvbnm-") + [lv.SYMBOL.BACKSPACE, "\n"]
-        key_map += [lv.SYMBOL.CLOSE, lv.SYMBOL.LEFT, " ", lv.SYMBOL.RIGHT, lv.SYMBOL.OK, ""]
-        controls = [4 if key == " " else 1 for key in key_map if key not in ("", "\n")]
-        keys.set_map(lv.keyboard.MODE.USER_1, key_map, controls)
-        keys.set_mode(lv.keyboard.MODE.USER_1)
+        keys = lv.keyboard(panel) # Create a keyboard
+        keys.set_size(600, 240) # Set size
+        keys.align(lv.ALIGN.BOTTOM_MID, 0 ,0) # Anchor to bottom mid
+        keys.set_style_text_font(self.font_16, lv.PART.ITEMS) # Font of keys on keyboard
+        keys.set_style_bg_color(lv.color_hex(0x000000), 0) # Black background
+        key_map = list("qwertyuiopå") + ["\n"] + list("asdfghjklöä") + ["\n"] # First two row of letters
+        key_map += list("zxcvbnm-") + [lv.SYMBOL.BACKSPACE, "\n"] # Third row of letters (and symbol)
+        key_map += [lv.SYMBOL.CLOSE, lv.SYMBOL.LEFT, " ", lv.SYMBOL.RIGHT, lv.SYMBOL.OK, ""] # Forth row of symbols
+        controls = [4 if key == " " else 1 for key in key_map if key not in ("", "\n")] # Size of keys (space is larger)
+        keys.set_map(lv.keyboard.MODE.USER_1, key_map, controls) # Apply our custom key-map as the keyboard layout
+        keys.set_mode(lv.keyboard.MODE.USER_1) # Display our custom layout
         keys.set_textarea(field)
 
         def normalize(text):
@@ -215,29 +214,41 @@ class Application:
             else:
                 results.add_state(lv.STATE.DISABLED)
                 # status.set_text("No matching stops")
+
+        self.search_keyboard_buffers = (key_map, controls)
         field.add_event_cb(
-            filter_names,
-            lv.EVENT.VALUE_CHANGED,
-            (key_map, controls),
+            filter_names, # Update the filtered dropdown...
+            lv.EVENT.VALUE_CHANGED, # ... when the field is modified.
+            None,
         )
 
         filter_names()
 
         def close_search(_event):
-            filtered_names = results.get_options().splitlines()
-            index = results.get_selected()
+            filtered_names = results.get_options().splitlines() # Get the filtered options
+            index = results.get_selected() # And the index of the selected one
 
-            if not 0 <= index < len(filtered_names):
-                return
-            chosen = filtered_names[index]
-            dropdown.set_selected(names.index(chosen))
-            dropdown.send_event(lv.EVENT.VALUE_CHANGED, None)
+            if not 0 <= index < len(filtered_names): # If index fails (outside of selectable options)
+                return # Return nothing
+            chosen = filtered_names[index] # This is the stop chosen
+            dropdown.set_selected(names.index(chosen)) # Set the original dropdown to that chosen stop
+            dropdown.send_event(lv.EVENT.VALUE_CHANGED, None) # And trigger an VALUE_CHANGED event for that dropdown.
+            keys.set_textarea(None)
+            panel.delete()
+
+        def cancel_search(_event):
             keys.set_textarea(None)
             panel.delete()
 
         field.add_event_cb(
-            close_search,
-            lv.EVENT.READY,
+            cancel_search, # Run the function cancel_search...
+            lv.EVENT.CANCEL, # ...when field is declined.
+            None
+        )
+
+        field.add_event_cb(
+            close_search, # Run the function close_search...
+            lv.EVENT.READY, # ...when field is submitted.
             None
         )
 
@@ -319,6 +330,10 @@ class Application:
 
     def destroy_screen(self, screen):
         """Clears existing departure data to be replaced with new data."""
+        # Since we have lists of all elements saved, to be recolored on dark-mode switch.
+        # We also need to remove those elements from those lists.
+        # We therefore need to loop through all elements and remove those from the lists
+        # (or rather re-save those that should still remain)
         def belongs_to_screen(widget):
             parent = widget.get_parent()
             while parent is not None:
@@ -896,7 +911,6 @@ class Application:
 
     def create_ui(self):
         'Function: Creates UI'
-        #api_data = read_data(False) ## IF TRUE, ONLY USE TEST-DATA INSTEAD (i.e. don't use ACTUAL data)
         self.tileview = lv.tileview(lv.screen_active()) ## Creates frame to add tiles to
         self.tileview.set_size(600, 450) ## That is the size 600 in x and 450 in y
         self.tileview.set_scrollbar_mode(lv.SCROLLBAR_MODE.OFF) ## Scrollbar is that thing on your right that you can grab and scroll.
