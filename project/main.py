@@ -178,6 +178,7 @@ class Application:
         # status.set_pos(20, 130)
         # status.set_width(560)
 
+        # Create a custom keyboard with support for Swedish characters
         keys = lv.keyboard(panel)
         keys.set_pos(0, 210)
         keys.set_size(600, 240)
@@ -199,7 +200,7 @@ class Application:
                 .replace("Ö", "ö")
                 .lower()
             )
-
+        # Filter available stops based on the user's search input
         def filter_names(_event=None):
             query = normalize(field.get_text().strip())
             matches = [
@@ -225,6 +226,7 @@ class Application:
 
         filter_names()
 
+        # Transfer the selected search result to the original dropdown
         def close_search(_event):
             filtered_names = results.get_options().splitlines()
             index = results.get_selected()
@@ -290,7 +292,7 @@ class Application:
 
     def create_title_screen(self):
         """Function: Startup-screen."""
-        self.title_screen = self.tileview.add_tile(0, 0, lv.DIR.RIGHT) # Create a screen on our tileview
+        self.title_screen = self.tileview.add_tile(2, 0, lv.DIR.RIGHT) # Create a screen on our tileview
 
         # Create labels for title-screen
         self.title_screen_label = lv.label(self.title_screen) # Add a label to the Title screen
@@ -347,28 +349,35 @@ class Application:
 
         self.previous_tile = current_tile
 
+        # Stop automatic departure updates when leaving the departure screen
         if previous_tile == self.dep_scr and current_tile != self.dep_scr:
             self.stop_departure_timer()
 
+        # Refresh departures when navigating from settings to the departures screen
         if previous_tile == self.settings_screen and current_tile == self.dep_scr:
             log("Swap to Departure-screen")
             self.refresh_departures()
 
+        # Fetch and display journeys when entering the journey screen from journey selection
         if previous_tile == self.journey_selection_screen and current_tile == self.journey_screen:
             log("Swap to Journey-screen")
             self.journeys, _ = find_journey(self.journey_from, self.journey_to) # Fetch data on Journeys between from and to.
             self.refresh_journeys(self.journeys)
 
     def refresh_journeys(self, journeys):
-        """To update Journeys"""
+        """Update the journey screen with the available jopurneys."""
+
+        # Remove previously displyed journeys before displaying new ones
         self.destroy_screen(self.journey_screen)
 
+        # Create a header displaying the departure and destination stops
         self.journey_screen_header_label = lv.label(self.journey_screen)
         self.journey_screen_header_label.set_style_text_font(self.font_28, 0)
         self.journey_screen_header_label.set_text(f"{self.journey_from} -> {self.journey_to}")
         self.journey_screen_header_label.set_pos(10, 0)
         self.labels.append(self.journey_screen_header_label)
 
+        # Create a label for each journey
         y = 40
         for journey in journeys:
             journey_label = lv.label(self.journey_screen)
@@ -377,8 +386,12 @@ class Application:
             journey_label.set_text(str(journey).replace("\t", "    "))
             journey_label.set_pos(10, y)
             journey_label.update_layout()
+
+            # Position the next journey below the current one to avoid overlapping
             y += journey_label.get_height() + 16
             self.labels.append(journey_label)
+
+        # Apply the current color theme to journey screen
         self.apply_colors(self.journey_screen)
 
     def refresh_departures(self):
@@ -430,7 +443,7 @@ class Application:
             and self.q_time is not None
         ):
             def update_q_time(_timer=None):
-                """Update the departure countdown"""
+                """Update the departure countdown."""
                 if self.q_time is None:
                     return
 
@@ -438,12 +451,14 @@ class Application:
                     time.ticks_ms(), # pylint: disable=no-member
                     self.refresh_started,
                 )
+                # Calculate the remaining seconds until the next automatic refresh
                 remaining_s = (max(0, 60_000 - elapsed_ms) + 999) // 1000
                 if remaining_s <= 0 and self.tileview.get_tile_active() == self.dep_scr:
                     self.refresh_departures()
                     return
                 self.q_time.set_text(str(remaining_s))
             update_q_time()
+            # Update the countdown every second
             self.departure_timer = lv.timer_create(
                 update_q_time,
                 1000,
@@ -487,7 +502,7 @@ class Application:
             departure for departure in stop.departures
             if (self.default_transport_type == "ALL" or departure.route.transport_type == self.default_transport_type)
         ]
-        ## For each departure, we will have a row with 3 columns; Route, Direction and Time
+        ## For each departure, we will have a row with 4 columns; Route, Direction, ETA and Delay
         for departure in filtered_departures:
             dep_timestamp = departure.realtime or departure.scheduled # Realtime if realtime exists, else scheduled
             eta = dep_timestamp[11:19] # As it's a timestamp, we only want the HH:MM:SS part, i.e. excluding the date.
@@ -569,7 +584,7 @@ class Application:
 
     def create_settings_screen(self):
         """Function: Create a settings screen."""
-        self.settings_screen = self.tileview.add_tile(1, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a screen on our tileview
+        self.settings_screen = self.tileview.add_tile(3, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a screen on our tileview
 
         # SETTINGS HEADER
         settings_header = lv.label(self.settings_screen)
@@ -747,7 +762,7 @@ class Application:
 
     def create_qr_legal_screen(self):
         """Shows a QR-code for the legal-text related to Trfa."""
-        self.qr_scr = self.tileview.add_tile(1, 1, lv.DIR.NONE)
+        self.qr_scr = self.tileview.add_tile(3, 1, lv.DIR.NONE)
         self.backgrounds.append(self.qr_scr)
 
         return_label = lv.label(self.qr_scr)
@@ -767,7 +782,7 @@ class Application:
         self.qr_image.center()
 
     def create_journey_selection_screen(self):
-        """Function: Create a journey selection screen"""
+        """Function: Create a journey selection screen."""
         self.journey_selection_screen = self.tileview.add_tile(1, 0, lv.DIR.LEFT | lv.DIR.RIGHT)
 
         # JOURNEY HEADER-LABEL
@@ -802,6 +817,7 @@ class Application:
         from_dropdown.set_selected(selected_from) # Set default stop as selected
         self.journey_from = from_names[selected_from] # Update the defaultly seleceted stop as journey_from
         self.controls.append(from_dropdown) # Add to list of controls to be recolored
+
         def on_from_changed(_event): # Update journey_from when dropdown changes
             """What to do when a different value is selected"""
             names = from_dropdown.get_options().splitlines()
@@ -854,8 +870,9 @@ class Application:
         to_dropdown.set_selected(selected_to)
         self.journey_to = to_names[selected_to]
         self.controls.append(to_dropdown)
+
         def on_to_changed(_event): # Update journey_to when dropdown changes
-            """What to do when a different value is selected"""
+            """What to do when a different value is selected."""
             names = to_dropdown.get_options().splitlines()
             index = to_dropdown.get_selected()
             if 0 <= index < len(names):
@@ -887,14 +904,14 @@ class Application:
 
     def create_journey_screen(self):
         """Creates a journey screen."""
-        self.journey_screen = self.tileview.add_tile(0, 0, lv.DIR.RIGHT) #
+        self.journey_screen = self.tileview.add_tile(0, 0, lv.DIR.RIGHT) 
         self.journey_screen_label = lv.label(self.journey_screen)
         self.journey_screen_label.set_text("Reseskärm")
         self.journey_screen_label.align(lv.ALIGN.CENTER, 0, -180)
         self.backgrounds.append(self.journey_screen)
         self.labels.append(self.journey_screen_label)
 
-        self.labels.append(self.journey_screen_label)
+        #self.labels.append(self.journey_screen_label)
 
     def create_ui(self):
         """Function: Creates UI."""
@@ -940,11 +957,14 @@ class Application:
         #     time.sleep_ms(250) # pylint: disable=no-member
         # log("Wi-Fi connected" if station.isconnected()
         #     else "Wi-Fi could not connect (timeout)")
+
+        # Use the configured network list or fall back to the default Wi-Fi credentials
         networks = WIFI_LIST or [(WIFI_SSID, WIFI_PASSWORD)]
 
         station = network.WLAN(network.STA_IF)
         station.active(True)
 
+        # Attempt to connect to each donfigured Wi-Fi network
         for ssid, password in networks:
             log(f"Connection to Wi-Fi SSID: {ssid}")
 
@@ -953,6 +973,7 @@ class Application:
                 station.connect(ssid, password)
                 started = time.ticks_ms()
 
+                # Wait up to 15 seconds for the connection to succeed
                 while (
                     not station.isconnected()
                     and time.ticks_diff(time.ticks_ms(), started) < 15_000

@@ -2,42 +2,93 @@
 
 ## Application Overview
 
-Is a device that helps the user find different stops and routes by bus, train and boat in karlskrona to help the user travel with public transport.
+L.I.G.M.A.B is a public transport application developed for the LilyGo ESP32-T4-S3 using MicroPython and LVGL. The application helps users find public transport departures and plan journeys by bus, train and ferry in the Karlskrona area. 
 
 ## Application Features
 
-
+- Display real-time public transport departuers.
+- Display route numbers, destinations, arrival times and delays.
+- Automatically refresh departure information every 60 seconds.
+- Filter and search for stops.
+- Plan journeys between two selected stops.
+- Sort journey suggestions by earliest arrival time.
+- Switch between dark and light mode.
+- Save and restore user settings.
+- Access Trafiklab's Terms of Service through QR code.
 
 ## Screen Descriptions
 
 0. L.I.G.M.A.B screen:
-Shows group number, names and version of the application.
+
+Displays the application name, qroup number, group members and application version.
 
 1. Settings screen:
-Shows transportation types and the stop you want to go from. 
 
-You can switch to light mode from default dark mode.
+Allows the user to select a transport type and a stop. 
 
-You can then save the settings.  
+The user can switch between dark and light mode, save their current settings or restore previously saved settings. 
 
-You can see trafiklab terms of service by scanning the qr-code that pops up when clicking Trafiklab Tos.
+Trafiklab's Terms of Service can be accessed by selecting "Trafiklab ToS" and scanning the displayed QR code.
 
 2. Departurure screen:
-Shows transport type, estimated time of arrival, destination and delay in seconds.
+
+Displays upcoming departures from the selected stop, including: 
+
+- Route number
+- Transport type
+- Destination
+- Estimated time of arrival(ETA)
+- Delays
+
+Departure information is automatically refreshed every 60 seconds while the screen is active.
 
 -1. Journey Selection Screen:
-When you have choosen stransport type and selected a stop you can go to journey selection screen and shoose from and to stop.
+
+Allows the user to select a departure stop (From) and a destination stop (To).
+
+Stops can be selected using dropdown menus or searched for using the on-screen keyboard.
 
 -2. Top 5 Journeys:
-From journey selection screen you now see different stops on that specific journey with all different routes combined to get the top 5 journeys. 
+
+Displays journey suggestions between the selected departure and destination stops.
+
+Each journey contains departure and arrival times, total travel duration and individual travel segments, including transfers and walking distances where applicable.
+
+Journeys are sorted by earliest arrival time.
 
 ## Navigation
 
-Swipe through screen
+The user navigates between the main screens by swiping horizontally on the touchscreen.
+
+The QR code screen is accessed through the Settings Screen.
 
 ## Trafiklab API Integration
 
-Data is collected from trafiklab web
+The application uses two APIs to retrieve public transport information:
+
+- Trafiklab Realtime API: Provides departure information, destinations, scheduled and real-time departure times, delays and cancellations.
+
+- ResRobot API: Provides journey suggestions between selcted stops, including travel times, transfers and walking segments.
+
+The application uses STOPS.json to associate stop names with their corresponding stop IDs.
+
+## Project structure
+
+# File                 # Description
+project/main.py        Handles the user interface, navigation, settings and Wi-Fi connection.
+project/data.py        Retrieces, processes and sorts public transport data.
+project/STOPS.json     Contains stop names and their corresponding IDs.
+project/secrets.py     Contains Wi-Fi credentials and API keys.
+t4s3-simulator/        Contains the desktop simulator.
+
+## API Configuration 
+
+To retrieve live public transport information, valid API keys must be added to project/secrets.py:
+
+TRAFIKLAB_API_KEY = "YOUR API KEY"
+RESROBOT_API_KEY = "YOUR_API_KEY"
+
+Never commit real API keys or Wi-Fi credentials to GitHub.
 
 
 # ESP32-T4-S3-MicroPython-Template

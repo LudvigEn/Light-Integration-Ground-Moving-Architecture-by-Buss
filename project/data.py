@@ -47,6 +47,7 @@ class Leg:
         origin = data["Origin"]
         destination = data["Destination"]
 
+        # Use local stop names when available, otherwise use the API names
         self.origin = names_by_id.get(
             str(origin.get("extId", "")),
             origin["name"],
@@ -55,6 +56,8 @@ class Leg:
             str(destination.get("extId", "")),
             destination["name"],
         )
+
+        # Convert departure and arrival times to seconds to calculate travel duration
         self.departure_time = origin["time"]
         d_hours, d_minutes, d_seconds = map(int, self.departure_time.split(":"))
         self.departure_time_seconds = d_hours*3600 + d_minutes*60 + d_seconds
@@ -63,12 +66,15 @@ class Leg:
         self.arrival_time_seconds = a_hours*3600 + a_minutes*60 + a_seconds
         self.duration = self.arrival_time_seconds - self.departure_time_seconds
         self.line = data.get("number")
+
+        # Determine whether the journey leg involves walking
         if data["type"] == "WALK":
             self.walk = True
             self.dist = data["dist"]
         else:
             self.walk = False
         self.direction = data.get("direction") or ""
+        # Remove the municipalinty suffix from the direction name
         if self.direction.endswith(" kn)"):
             self.direction = self.direction.rsplit(" (", 1)[0]
 
@@ -82,23 +88,23 @@ class Leg:
             return f"\t{self.departure_time[:-3]}- Walk {self.dist}m ({round(self.dist/self.duration, 1)}m/s) to {self.destination}"
 
     def get_origin(self):
-        """Return Origin Stop"""
+        """Return Origin Stop."""
         return self.origin
 
     def get_destination(self):
-        """Return Destination Stop"""
+        """Return Destination Stop."""
         return self.destination
 
     def get_line(self):
-        """Return line (i.e. route)"""
+        """Return line (i.e. route)."""
         return self.line
 
     def get_duration(self):
-        """Return duration of leg (in seconds)"""
+        """Return duration of leg (in seconds)."""
         return self.duration
 
     def get_distance(self):
-        """Return duration of leg (in seconds)"""
+        """Return the walking distance in meters, or None if not walking."""
         if self.walk is True:
             return self.dist
         else:
@@ -119,6 +125,7 @@ class Journey:
             str(destination.get("extId", "")),
             destination["name"],
         )
+        # Convert departure and arrival times to seconds to calculate total travel duration
         self.departure_time = origin["time"]
         d_hours, d_minutes, d_seconds = map(int, self.departure_time.split(":"))
         self.departure_time_seconds = d_hours*3600 + d_minutes*60 + d_seconds
@@ -127,11 +134,13 @@ class Journey:
         self.arrival_time_seconds = a_hours*3600 + a_minutes*60 + a_seconds
         self.duration  = self.arrival_time_seconds - self.departure_time_seconds
 
+        # Create a Leg object for each segment of the journey
         self.legs = [
             Leg(item, names_by_id)
             for item in data["LegList"]["Leg"]
         ]
 
+    # Format the journey and its individual legs for display
     def __str__(self):
         msg = f"{self.departure_time[:-3]} from {self.origin} to {self.destination}. "
         msg += f"Arrive by {self.arrival_time[:-3]}. "
@@ -146,6 +155,7 @@ class Journey:
     def __int__(self):
         return self.duration
 
+    # Compare journeys by arrival time to enable chronological sorting
     def __lt__(self, other):
         if not isinstance(other, Journey):
             return NotImplemented
@@ -157,23 +167,23 @@ class Journey:
         )
 
     def get_departure_time(self):
-        """Returns time (as a string)"""
+        """Returns time (as a string)."""
         return self.departure_time
 
     def get_arrival_time(self):
-        """Returns time (as a string)"""
+        """Returns time (as a string)."""
         return self.arrival_time
 
     def get_origin(self):
-        """Returns Journey Origin"""
+        """Returns Journey Origin."""
         return self.origin
 
     def get_destination(self):
-        """Returns Journey Destination"""
+        """Returns Journey Destination."""
         return self.destination
 
     def get_legs(self):
-        """Returns Legs (part of Journey)"""
+        """Returns Legs (part of Journey)."""
         return self.legs
 
 
@@ -211,6 +221,7 @@ def parse_data(payload):
     stops_by_id = {}
     if not payload["stops"]:
         return None
+    # Create stop objects and store them by their unique IDs
     for item in payload["stops"]:
         stop = Stop()
         stop.id = item["id"]
@@ -220,6 +231,7 @@ def parse_data(payload):
         stop.departures = []
         stops_by_id[stop.id] = stop
 
+    # Convert API departure data into route and departure objects
     for item in payload["departures"]:
         route_data = item["route"]
 
@@ -237,9 +249,11 @@ def parse_data(payload):
         departure.canceled = item["canceled"]
         departure.route = route
 
+        # Associate each departure with its corresponding stop
         stop_id = item["stop"]["id"]
         stops_by_id[stop_id].departures.append(departure)
 
+    # Combine departures from all returned stops into a single stop object
     combined_stop = Stop()
     combined_stop.id = payload["query"]["query"]
     combined_stop.name = payload["stops"][0]["name"]
@@ -250,6 +264,7 @@ def parse_data(payload):
         for child_stop in stops_by_id.values()
         for departure in child_stop.departures
     ]
+    # Sort departures by real-time departure time, falling back to scheduled time
     combined_stop.departures.sort(
         key = lambda departure: departure.realtime or departure.scheduled
     )
@@ -266,7 +281,7 @@ def find_journey(stop_a, stop_b, transport_type="ALL"):
         STOPS = json.load(file)
     start_stop = STOPS[transport_type][stop_a]
     end_stop = STOPS[transport_type][stop_b]
-    # ResRobots stop-names are weirdly formatted and needs
+    # Map stop IDs to local stop names for consistent naming
     names_by_id = {
         str(stop_id): name
         for name, stop_id in STOPS["ALL"].items()
@@ -293,7 +308,9 @@ def find_journey(stop_a, stop_b, transport_type="ALL"):
         log("Closing ResRobot-API-connection")
 
     ### PROCESS DATA
+    # Convert API trip data into journey objects
     journeys = [Journey(item, names_by_id) for item in payload["Trip"]]
+    # Sort journeys by earliest arrival time 
     journeys.sort()
     return journeys, payload  # Payload is only interesting for manual runs
 
@@ -301,6 +318,7 @@ def find_journey(stop_a, stop_b, transport_type="ALL"):
 def main():
     """Main..."""
     journeys, payload = find_journey("Campus Gräsvik", "Jämjö centrum")
+    # Save the raw API response to a JSON file for testing and debugging
     with open("./assets/test_data/route_planner_output.json", "w", encoding="utf-8") as file:
         json.dump(payload, file, indent=4, ensure_ascii=False)
     for journey in journeys:
