@@ -276,7 +276,7 @@ class Simulator:
         ttk.Label(wifi_options, text='Blank accepts any; apply with Reset / Reload').pack(side='left')
         self.canvas = tk.Canvas(self.window, width=600, height=450, highlightthickness=0, bg='black')
         self.canvas.pack(padx=16, pady=8)
-        lv.setup(self.canvas)
+        lv.setup(self.canvas, on_refresh=lambda: self.refresh())
         self.cursor_position = tk.StringVar(value='x: —    y: —')
         ttk.Label(self.window, textvariable=self.cursor_position).pack()
         self.window.bind('<Motion>', self.update_cursor_position, add='+')
@@ -291,6 +291,7 @@ class Simulator:
         self.canvas.bind('<MouseWheel>', self.wheel)
         self.canvas.bind('<Button-4>', lambda event: self.wheel(event, -60))
         self.canvas.bind('<Button-5>', lambda event: self.wheel(event, 60))
+        self.canvas.bind('<KeyPress>', self.key)
         for key, delta in [('Left', (-1, 0)), ('Right', (1, 0)), ('Up', (0, -1)), ('Down', (0, 1))]:
             self.window.bind('<' + key + '>', lambda event, d=delta: self.move(*d))
         self.window.protocol('WM_DELETE_WINDOW', self.close)
@@ -402,15 +403,17 @@ class Simulator:
         try:
             with contextlib.redirect_stdout(self), contextlib.redirect_stderr(self):
                 executed = lv._timer_manager.run_due(on_error=self._timer_error)
-            if executed and not self._closed:
-                self.save_state()
+            if (executed or lv._refresh_pending) and not self._closed:
+                if executed:
+                    self.save_state()
                 self.refresh()
         except Exception as error:
             self._timer_error(error)
         finally:
             if not self._closed and self.context is not None:
                 # Keep observing timers created by touch callbacks, even when
-                # there were none on the previous pass. Idle passes don't draw.
+                # there were none on the previous pass. Idle passes only draw
+                # when an object explicitly requested invalidation.
                 delay = max(1, min(50, lv.timer_get_time_until_next()))
                 self._timer_after = self.window.after(delay, self._pump_timers)
 
@@ -431,13 +434,28 @@ class Simulator:
         for view in lv.tileviews():
             self.invoke(lambda v=view: v.move(dx, dy))
 
+    def key(self, event):
+        consumed = []
+        self.invoke(lambda: consumed.append(lv.handle_key(event.keysym, event.char)))
+        return 'break' if consumed and consumed[0] else None
+
     def down(self, event):
         self.canvas.focus_set()
         self.press = (event.x, event.y)
         self.drag_mode = None
         self.drag_target = self.scroll_target_at(event.x, event.y)
         self.drag_scroll_y = self.drag_target.get_scroll_y() if self.drag_target else 0
+        # A screen-level dialog or keyboard also consumes drags, so typing
+        # cannot swipe the tileview underneath it.
         self.popup_active = any(isinstance(hit[-1], lv._DropdownList) for hit in self.hits)
+        for x1, y1, x2, y2, node in reversed(self.hits):
+            if x1 <= event.x < x2 and y1 <= event.y < y2:
+                while node:
+                    if isinstance(node, (lv.keyboard, lv.textarea)) or (
+                            node.parent is lv.screen_active() and node.has_flag(lv.obj.FLAG.CLICKABLE)):
+                        self.popup_active = True
+                    node = node.parent
+                break
 
     def scroll_target_at(self, x, y):
         for x1, y1, x2, y2, node in reversed(self.hits):
@@ -502,6 +520,7 @@ class Simulator:
         if self.context:
             self.context.__exit__(None, None, None)
             self.context = None
+        lv.teardown(self.canvas)
         self.window.destroy()
         self.temp.cleanup()
 

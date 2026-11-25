@@ -282,7 +282,7 @@ def render_text(text, font, color, width=None):
     """Compose actual glyph alpha masks with kerning, wrapping, and fallback."""
     native = bitmap_font(font)
     native._check_alive()
-    text = str(text).replace('\r\n', '\n').replace('\r', '\n').replace('\t', '    ')
+    text = str(text).replace('\r\n', '\n').replace('\r', '\n')
     placeholder = Image.new('L', (max(3, native.size // 2), max(3, native.size * 3 // 4)))
     ImageDraw.Draw(placeholder).rectangle((0, 0, placeholder.width - 1, placeholder.height - 1), outline=255)
     missing = Glyph(placeholder.width + 1, 0, 0, placeholder)
@@ -293,10 +293,14 @@ def render_text(text, font, color, width=None):
     def glyphs_for(token):
         result = []
         for index, char in enumerate(token):
-            owner, glyph = resolve_glyph(font, ord(char))
+            # LVGL's fmt_txt fonts resolve tabs as a space with twice the
+            # advance, rather than expanding to editor-style tab stops.
+            code = ord(' ') if char == '\t' else ord(char)
+            owner, glyph = resolve_glyph(font, code)
+            advance = glyph.advance * (2 if char == '\t' else 1) if glyph else missing.advance
             glyph = glyph or missing
-            kern = owner.kerning(ord(char), ord(token[index + 1])) if owner and index + 1 < len(token) else 0
-            result.append((glyph, max(0, glyph.advance + kern)))
+            kern = owner.kerning(code, ord(token[index + 1])) if owner and index + 1 < len(token) else 0
+            result.append((glyph, max(0, advance + kern)))
         return result
 
     for token in re.findall(r'\n|[^\S\n]+|[^\s]+', text):
@@ -321,8 +325,12 @@ def render_text(text, font, color, width=None):
     widest = max(widest, x)
     max_y = max(max_y, (line + 1) * native.line_height)
     size = max(1, math.ceil(max(max_x, widest) - min_x)), max(1, max_y - min_y)
-    if size[0] * size[1] > 16 * 1024 * 1024:
-        raise ValueError('Rendered font label is too large')
+    # Very long, narrow images can pass the pixel budget but stall Tk's
+    # PhotoImage drawing. Check both dimensions before allocating a bitmap.
+    if max(size) > 16384 or size[0] * size[1] > 16 * 1024 * 1024:
+        raise ValueError(
+            'Rendered font label is too large (%d x %d); '
+            'set a label width to wrap text or display less text' % size)
     mask = Image.new('L', size)
     for left, top, glyph in placements:
         # Maximum alpha preserves overlapping glyph edges without erasing ink.

@@ -21,7 +21,6 @@ BUILD = ROOT / "device-build"
 VFS_ROOT = BUILD / "vfs-root"
 VFS_IMAGE = BUILD / "t4s3-vfs.img"
 VFS_DEPLOY_IMAGE = BUILD / "t4s3-vfs-deploy.img"
-VFS_DEPLOY_SIZE = 0x20000
 FIRMWARE = ROOT / "firmware" / "t4s3-lvgl-micropython.bin"
 
 PIO_PACKAGES = Path(env.subst("$PROJECT_PACKAGES_DIR"))
@@ -102,9 +101,10 @@ def build_app_fs(source=None, target=None, env=None):
          "-s", str(vfs_size), str(VFS_IMAGE)],
         check=True,
     )
-    with VFS_IMAGE.open("rb") as source_stream, \
-            VFS_DEPLOY_IMAGE.open("wb") as target_stream:
-        target_stream.write(source_stream.read(VFS_DEPLOY_SIZE))
+    # Files can be allocated anywhere in the FAT partition. A fixed-size
+    # prefix can omit drivers or assets while leaving their directory entries
+    # intact, so deploy the complete filesystem image.
+    shutil.copyfile(VFS_IMAGE, VFS_DEPLOY_IMAGE)
     print("Python application packaged: %s" % VFS_DEPLOY_IMAGE)
 
 

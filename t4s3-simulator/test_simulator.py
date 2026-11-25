@@ -395,7 +395,7 @@ class WidgetTests(unittest.TestCase):
                                   scheduled='2026-09-18T17:00:00', delay=300, canceled=False)
         stop = SimpleNamespace(name='Campus Gräsvik', departures=[departure, updated])
         for _ in range(2):
-            app.clear_departures()
+            app.destroy_screen(app.dep_scr)
             app.create_departure_screen(stop)
             self.assertEqual(app.dep_scr.children[0].get_text(), stop.name)
             rows = [child for child in app.dep_scr.children if child.children]
@@ -653,6 +653,7 @@ class ImageTests(unittest.TestCase):
 
     def test_clickable_labels_open_qr_and_return_using_visible_text_bounds(self):
         legal = lv.label(self.settings)
+        default_label_width = legal.width
         legal.set_text('Tap for Trafiklab ToS')
         legal.set_pos(200, 400)
         legal.add_flag(lv.obj.FLAG.CLICKABLE)
@@ -673,7 +674,7 @@ class ImageTests(unittest.TestCase):
                     and self.canvas.itemcget(item, 'text') == legal.get_text())
         x1, y1, x2, y2 = self.canvas.bbox(text)
         # The visible link extends beyond the simulator's default label width.
-        self.assertGreater(x2 - 2, legal.x + legal.width)
+        self.assertGreater(x2 - 2, legal.x + default_label_width)
         touch = SimpleNamespace(x=x2 - 2, y=(y1 + y2) / 2)
         simulator.down(touch)
         simulator.up(touch)
@@ -956,10 +957,10 @@ class SimulatorTests(unittest.TestCase):
             app.boot()
             self.assertIn('app', app.scope, app.console.get('1.0', 'end'))
             target = app.scope['app']
-            self.assertEqual(target.tileview.active, (0, 0))
+            self.assertIs(target.tileview.get_tile_active(), target.title_screen)
             app.down(SimpleNamespace(x=500, y=200))
             app.up(SimpleNamespace(x=100, y=200))
-            self.assertEqual(target.tileview.active, (1, 0))
+            self.assertIs(target.tileview.get_tile_active(), target.settings_screen)
             self.assertTrue(target.dark_mode)
             self.assertTrue(target.dark_mode_switch.has_state(lv.STATE.CHECKED))
             self.assertEqual(target.transport_type_dropdown.get_options(), '\n'.join(sorted(target.STOPS)))
@@ -976,7 +977,7 @@ class SimulatorTests(unittest.TestCase):
             self.assertEqual(target.settings_screen.bg, '#000000')
             self.assertTrue(all(label.fg == '#ffffff' for label in target.labels))
             app.move(1, 0)
-            self.assertEqual(target.tileview.active, (2, 0))
+            self.assertIs(target.tileview.get_tile_active(), target.dep_scr)
             self.assertGreater(len(target.dep_scr.children), 2, app.console.get('1.0', 'end'))
             self.assertIn('Fetch and parsing data:', app.console.get('1.0', 'end'))
             self.assertIn('Rendering Departure-screen:', app.console.get('1.0', 'end'))
@@ -995,10 +996,10 @@ class SimulatorTests(unittest.TestCase):
             self.assertEqual(len(target.dep_scr.children), row_count)
             app.wheel(SimpleNamespace(x=300, y=200, delta=-120))
             self.assertGreater(target.dep_scr.get_scroll_y(), 0)
-            self.assertEqual(target.tileview.active, (2, 0))
+            self.assertIs(target.tileview.get_tile_active(), target.dep_scr)
             app.move(-1, 0)
             app.move(-1, 0)
-            self.assertEqual(target.tileview.active, (0, 0))
+            self.assertIs(target.tileview.get_tile_active(), target.title_screen)
             self.assertTrue((app.root / 'debug.log').exists())
         finally:
             app.close()
@@ -1031,7 +1032,7 @@ class SimulatorTests(unittest.TestCase):
                 self.assertEqual(target.default_stop, stops[-1])
                 self.assertFalse(control.is_open())
                 self.assertEqual(target.settings_screen.get_scroll_y(), 0)
-                self.assertEqual(target.tileview.active, (1, 0))
+                self.assertIs(target.tileview.get_tile_active(), target.settings_screen)
             finally:
                 app.close()
 

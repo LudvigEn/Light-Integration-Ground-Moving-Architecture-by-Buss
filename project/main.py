@@ -6,12 +6,31 @@ if (
     and "lvgl" not in sys.modules
 ):
     from pathlib import Path
+    from shutil import which
     import subprocess
 
-    simulator_dir = (
-        Path(__file__).resolve().parents[1]
-        / "t4s3-simulator"
+    project_dir = Path(__file__).resolve().parents[1]
+    simulator_dir = project_dir / "t4s3-simulator"
+
+    pio = which("pio") or which("platformio")
+    if pio is None:
+        pio = Path.home() / ".platformio" / "penv" / (
+            "Scripts/pio.exe" if sys.platform == "win32" else "bin/pio"
+        )
+        if not pio.is_file():
+            raise SystemExit(
+                "PlatformIO was not found. Install PlatformIO IDE in VS Code "
+                "or add the PlatformIO CLI to PATH."
+            )
+
+    print("Building Python application with PlatformIO...", flush=True)
+    build_result = subprocess.call(
+        [str(pio), "run", "--environment", "t4s3-micropython",
+         "--target", "build_app_fs"],
+        cwd=str(project_dir),
     )
+    if build_result:
+        raise SystemExit(build_result)
 
     command = (
         ["cmd.exe", "/d", "/c", "Launch.cmd"]
@@ -21,7 +40,7 @@ if (
 
     raise SystemExit(
         subprocess.call(command, cwd=str(simulator_dir))
-    )  # Runs the simulator on RUN
+    )  # Builds the application and runs the simulator on RUN
 import json
 import time # Provide timing and delay functions
 
@@ -33,11 +52,12 @@ from debug_log import log # Import the applications logging function
 
 from secrets import WIFI_SSID, WIFI_PASSWORD, WIFI_LIST # Load the Wi-Fi network name and password
 
-from data import read_data # Load the data-processing module
+from data import read_data, find_journey # Load the data-processing module
 
 import fs_driver # pylint: disable=import-error
 
 VERSION = 0.5 # Version-control
+
 
 class Application:
     """Class for application."""
@@ -97,6 +117,9 @@ class Application:
         """If a settings.txt file is present, read the data from it
         If there are not 3 lines of text in it; revert to some defaults.
         """
+        self.default_stop = "Campus Gräsvik"
+        self.default_transport_type = "BUS"
+        self.dark_mode = True
         try:
             with open("settings.txt", "r", encoding="utf-8") as file:
                 lines = file.read().splitlines()
@@ -296,13 +319,13 @@ class Application:
         self.labels.append(self.title_screen_label_version) # Add to list of all labels
         log("title-screen created")
 
-    def clear_departures(self):
+    def destroy_screen(self, screen):
         """Clears existing departure data to be replaced with new data."""
         def belongs_to_departures(widget):
 
             parent = widget.get_parent()
             while parent is not None:
-                if parent == self.dep_scr:
+                if parent == screen:
                     return True
                 parent = parent.get_parent()
             return False
@@ -310,10 +333,9 @@ class Application:
         for widgets in (self.backgrounds, self.borders, self.labels, self.controls):
             widgets[:] = [
                 widget for widget in widgets
-                if not belongs_to_departures(widget)
+                if not belongs_to_screen(widget)
             ]
-        self.dep_scr.clean()
-        # self.dep_scr.scroll_to_y(0, )
+        screen.clean()
 
     def on_tile_changed(self, _event):
         """Runs whenever a tile is changed."""
@@ -325,9 +347,39 @@ class Application:
 
         self.previous_tile = current_tile
 
+        if previous_tile == self.dep_scr and current_tile != self.dep_scr:
+            self.stop_departure_timer()
+
         if previous_tile == self.settings_screen and current_tile == self.dep_scr:
+            log("Swap to Departure-screen")
             self.refresh_departures()
-            log("on_tile_changed called")
+
+        if previous_tile == self.journey_selection_screen and current_tile == self.journey_screen:
+            log("Swap to Journey-screen")
+            self.journeys, _ = find_journey(self.journey_from, self.journey_to) # Fetch data on Journeys between from and to.
+            self.refresh_journeys(self.journeys)
+
+    def refresh_journeys(self, journeys):
+        """To update Journeys"""
+        self.destroy_screen(self.journey_screen)
+
+        self.journey_screen_header_label = lv.label(self.journey_screen)
+        self.journey_screen_header_label.set_style_text_font(self.font_28, 0)
+        self.journey_screen_header_label.set_text(f"{self.journey_from} -> {self.journey_to}")
+        self.journey_screen_header_label.set_pos(10, 0)
+        self.labels.append(self.journey_screen_header_label)
+
+        y = 40
+        for journey in journeys:
+            journey_label = lv.label(self.journey_screen)
+            journey_label.set_width(580)
+            journey_label.set_style_text_font(self.font_16, 0)
+            journey_label.set_text(str(journey).replace("\t", "    "))
+            journey_label.set_pos(10, y)
+            journey_label.update_layout()
+            y += journey_label.get_height() + 16
+            self.labels.append(journey_label)
+        self.apply_colors(self.journey_screen)
 
     def refresh_departures(self):
         """To update departures."""
@@ -373,7 +425,37 @@ class Application:
             self.labels.append(error_label)
         self.apply_colors(self.dep_scr)
         elapsed = time.ticks_diff(time.ticks_ms(), started) # pylint: disable=no-member
+        if (
+            self.tileview.get_tile_active() == self.dep_scr
+            and self.q_time is not None
+        ):
+            def update_q_time(_timer=None):
+                """Update the departure countdown"""
+                if self.q_time is None:
+                    return
+
+                elapsed_ms = time.ticks_diff( # pylint: disable=no-member
+                    time.ticks_ms(), # pylint: disable=no-member
+                    self.refresh_started,
+                )
+                remaining_s = (max(0, 60_000 - elapsed_ms) + 999) // 1000
+                if remaining_s <= 0 and self.tileview.get_tile_active() == self.dep_scr:
+                    self.refresh_departures()
+                    return
+                self.q_time.set_text(str(remaining_s))
+            update_q_time()
+            self.departure_timer = lv.timer_create(
+                update_q_time,
+                1000,
+                None,
+            )
         log(f"Rendering Departure-screen: {elapsed} ms")
+
+    def stop_departure_timer(self):
+        """Stops the timer if it's running."""
+        if self.departure_timer is not None:
+            self.departure_timer.delete()
+            self.departure_timer = None
 
     def create_departure_screen(self, stop):
         """Function: Show departures on a specific stop."""
@@ -385,16 +467,11 @@ class Application:
         header.set_style_text_font(self.font_28, 0) # Set font of the label
         self.labels.append(header) # Add to list of labels
 
-        q_time = lv.label(self.dep_scr)
-        refresh_countdown = time.ticks_diff(
-            time.ticks_ms(),
-            self.refresh_started,
-        )
-        remaining_s = (max(0, 60_000 - refresh_countdown) + 999) // 1000
-        q_time.set_text(str(remaining_s))
-        q_time.set_pos(500, 10)
-        q_time.set_style_text_font(self.font_16, 0)
-        self.labels.append(q_time)
+        self.q_time = lv.label(self.dep_scr)
+        self.q_time.set_text("60")
+        self.q_time.set_pos(500, 10)
+        self.q_time.set_style_text_font(self.font_16, 0)
+        self.labels.append(self.q_time)
 
         border_width = 2 # Thickness of box edges
         rows = [("Route", "Destination", "ETA", "Delay")]
@@ -571,7 +648,7 @@ class Application:
 
         stop_dropdown = lv.dropdown(self.settings_screen)
         stop_dropdown.set_pos(200, 140)
-        stop_dropdown.set_width(350)
+        stop_dropdown.set_width(300)
         stop_names = sorted(self.STOPS[self.default_transport_type])
         stop_dropdown.set_options("\n".join(stop_names))
 
@@ -600,6 +677,22 @@ class Application:
         for dropdown in (transport_type_dropdown, stop_dropdown):
             dropdown.set_style_text_font(self.font_16, 0)
             dropdown.get_list().set_style_text_font(self.font_16, 0)
+
+        # STOP FILTER
+        stop_filter = lv.button(self.settings_screen)
+        stop_filter.set_pos(500, 140)
+        stop_filter.set_size(50, 40)
+        stop_filter.set_style_border_width(2, 0)
+        self.borders.append(stop_filter)
+        stop_filter_label = lv.label(stop_filter)
+        stop_filter_label.set_text(lv.SYMBOL.KEYBOARD)
+        stop_filter_label.center()
+        self.controls.append(stop_filter)
+        stop_filter.add_event_cb(
+            lambda event: self.open_search(stop_dropdown),
+            lv.EVENT.CLICKED,
+            None
+        )
 
         # SAVE SETTINGS
         save_settings_button = lv.button(self.settings_screen)
@@ -650,9 +743,7 @@ class Application:
         )
         self.labels.append(legal_label)
 
-        #### Add for potential Dark/Light mode
-        self.backgrounds.append(self.settings_screen)
-        log("settings-screen created")
+        log("settings-screen updated")
 
     def create_qr_legal_screen(self):
         """Shows a QR-code for the legal-text related to Trfa."""
@@ -675,6 +766,125 @@ class Application:
         self.qr_image.set_src("S:/assets/QR_Black_On_White.png")
         self.qr_image.center()
 
+    def create_journey_selection_screen(self):
+        """Function: Create a journey selection screen"""
+        self.journey_selection_screen = self.tileview.add_tile(1, 0, lv.DIR.LEFT | lv.DIR.RIGHT)
+
+        # JOURNEY HEADER-LABEL
+        journey_header = lv.label(self.journey_selection_screen)
+        journey_header.set_text("Journey Selection")
+        journey_header.set_style_text_font(self.font_28, 0)
+        journey_header.align(lv.ALIGN.CENTER, 0, -150) # Place the label on the tile
+        self.labels.append(journey_header)
+
+        ## JOURNEY FROM SELECTOR
+        # JOURNEY FROM LABEL
+        from_label = lv.label(self.journey_selection_screen)
+        from_label.set_text("From:")
+        from_label.set_pos(75, 150)
+        from_label.set_style_text_font(self.font_28, 0)
+        self.labels.append(from_label)
+
+        # JOURNEY FROM DROPDOWN
+        from_dropdown = lv.dropdown(self.journey_selection_screen)
+        from_dropdown.set_pos(200, 150)
+        from_dropdown.set_width(275)
+        from_dropdown.set_style_text_font(self.font_16, 0)
+        from_dropdown.get_list().set_style_text_font(self.font_16, 0)
+        from_names = sorted(self.STOPS["ALL"]) # List of names of stop, to be presented as options
+        from_dropdown.set_options("\n".join(from_names)) # Use list above as options
+
+        selected_from = (
+            from_names.index(self.journey_from)
+            if self.journey_from in from_names
+            else 0) # Find default stop in list
+
+        from_dropdown.set_selected(selected_from) # Set default stop as selected
+        self.journey_from = from_names[selected_from] # Update the defaultly seleceted stop as journey_from
+        self.controls.append(from_dropdown) # Add to list of controls to be recolored
+        def on_from_changed(_event): # Update journey_from when dropdown changes
+            """What to do when a different value is selected"""
+            names = from_dropdown.get_options().splitlines()
+            index = from_dropdown.get_selected()
+            if 0 <= index < len(names):
+                self.journey_from = names[index]
+            log(f"Journey From: {self.journey_from}")
+        from_dropdown.add_event_cb( # This listens to updates to the dropdown
+            on_from_changed, # This is the function it will run.
+            lv.EVENT.VALUE_CHANGED, # When a value is changed
+            None,
+        )
+        # FROM STOP FILTER
+        from_stop_filter = lv.button(self.journey_selection_screen)
+        from_stop_filter.set_pos(475, 150)
+        from_stop_filter.set_size(50, 40)
+        from_stop_filter.set_style_border_width(2, 0)
+        self.borders.append(from_stop_filter)
+        from_stop_filter_label = lv.label(from_stop_filter)
+        from_stop_filter_label.set_text(lv.SYMBOL.KEYBOARD)
+        from_stop_filter_label.center()
+        self.controls.append(from_stop_filter)
+        from_stop_filter.add_event_cb(
+            lambda event: self.open_search(from_dropdown),
+            lv.EVENT.CLICKED,
+            None
+        )
+        ## JOURNEY TO SELECTOR
+        # JOURNEY LABEL
+        to_label = lv.label(self.journey_selection_screen)
+        to_label.set_text("To:")
+        to_label.set_pos(75, 250)
+        to_label.set_style_text_font(self.font_28, 0)
+        self.labels.append(to_label)
+
+        # JOURNEY TO DROPDOWN
+        to_dropdown = lv.dropdown(self.journey_selection_screen)
+        to_dropdown.set_pos(200, 250)
+        to_dropdown.set_width(275)
+        to_dropdown.set_style_text_font(self.font_16, 0)
+        to_dropdown.get_list().set_style_text_font(self.font_16, 0)
+        to_names = sorted(self.STOPS["ALL"])
+        to_dropdown.set_options("\n".join(to_names))
+
+        selected_to = (
+            to_names.index(self.journey_to)
+            if self.journey_to in to_names
+            else 0
+        )
+        to_dropdown.set_selected(selected_to)
+        self.journey_to = to_names[selected_to]
+        self.controls.append(to_dropdown)
+        def on_to_changed(_event): # Update journey_to when dropdown changes
+            """What to do when a different value is selected"""
+            names = to_dropdown.get_options().splitlines()
+            index = to_dropdown.get_selected()
+            if 0 <= index < len(names):
+                self.journey_to = names[index]
+            log(f"Journey To: {self.journey_to}")
+        to_dropdown.add_event_cb( # This listens to updates to the dropdown
+            on_to_changed, # This is the function it will run.
+            lv.EVENT.VALUE_CHANGED, # When a value is changed
+            None,
+        )
+        # TO STOP FILTER
+        to_stop_filter = lv.button(self.journey_selection_screen)
+        to_stop_filter.set_pos(475, 250)
+        to_stop_filter.set_size(50, 40)
+        to_stop_filter.set_style_border_width(2, 0)
+        self.borders.append(to_stop_filter)
+        to_stop_filter_label = lv.label(to_stop_filter)
+        to_stop_filter_label.set_text(lv.SYMBOL.KEYBOARD)
+        to_stop_filter_label.center()
+        self.controls.append(to_stop_filter)
+        to_stop_filter.add_event_cb(
+            lambda event: self.open_search(to_dropdown),
+            lv.EVENT.CLICKED,
+            None
+        )
+        #### Add for potential Dark/Light mode
+        self.backgrounds.append(self.journey_selection_screen)
+        log("journey-screen created")
+
     def create_journey_screen(self):
         """Creates a journey screen."""
         self.journey_screen = self.tileview.add_tile(0, 0, lv.DIR.RIGHT) #
@@ -684,20 +894,25 @@ class Application:
         self.backgrounds.append(self.journey_screen)
         self.labels.append(self.journey_screen_label)
 
+        self.labels.append(self.journey_screen_label)
+
     def create_ui(self):
         """Function: Creates UI."""
         #api_data = read_data(False) ## IF TRUE, ONLY USE TEST-DATA INSTEAD (i.e. don't use ACTUAL data)
         self.tileview = lv.tileview(lv.screen_active()) ## Creates frame to add tiles to
         self.tileview.set_size(600, 450) ## That is the size 600 in x and 450 in y
         self.tileview.set_scrollbar_mode(lv.SCROLLBAR_MODE.OFF) ## Scrollbar is that thing on your right that you can grab and scroll.
-        self.read_settings()
-        self.create_title_screen() ## Creation of Title-Screen
+        self.read_settings() ## Reads settings from file.
+        self.create_title_screen() ## Creation of Title-Screen.
         self.create_qr_legal_screen() ## Create QR-screen
+        self.create_journey_selection_screen() ## Create Journey Selection Screen
+        self.create_journey_screen() ## Create subsequent Journey Screen
+        self.settings_screen = self.tileview.add_tile(3, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a blank settings-screen on our tileview
+        self.backgrounds.append(self.settings_screen)
         self.create_settings_screen() ## Placeholder creation of Settings-screen
-        self.create_journey_screen() ## Creates journey screen
-        self.dep_scr = self.tileview.add_tile(2, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a placeholder departure screen
+        self.dep_scr = self.tileview.add_tile(4, 0, lv.DIR.LEFT) # Create a placeholder departure screen
         self.backgrounds.append(self.dep_scr)
-        self.create_journey_screen() ## Creates journey screen
+        self.tileview.set_tile(self.title_screen, False)
 
         self.previous_tile = self.tileview.get_tile_active()
         self.tileview.add_event_cb(
