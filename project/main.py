@@ -373,15 +373,6 @@ class Application:
         if previous_tile == self.dep_scr and current_tile != self.dep_scr:
             self.stop_departure_timer()
 
-        if previous_tile == self.settings_screen and current_tile == self.dep_scr:
-            log("Swap to Departure-screen")
-            self.refresh_departures()
-
-        if previous_tile == self.journey_selection_screen and current_tile == self.journey_screen:
-            log("Swap to Journey-screen")
-            self.journeys, _ = find_journey(self.journey_from, self.journey_to)
-            self.refresh_journeys(self.journeys)
-
     def refresh_journeys(self, journeys):
         """To update Journeys"""
         self.destroy_screen(self.journey_screen)
@@ -754,6 +745,24 @@ class Application:
             None,
         )
 
+        # LOAD BUTTON
+        load_settings_button = lv.button(self.settings_screen)
+        load_settings_button.set_pos(300, 200)
+        load_settings_button.set_size(200, 50)
+        load_settings_button.set_style_border_width(2, 0)
+        self.controls.append(load_settings_button)
+
+        load_settings_label = lv.label(load_settings_button)
+        load_settings_label.set_text("LOAD")
+        load_settings_label.center()
+        self.labels.append(load_settings_label)
+
+        reset_settings_button.add_event_cb(
+            lambda _event: self.refresh_departures(),
+            lv.EVENT.CLICKED,
+            None,
+        )
+
         # QR CODE
         legal_label = lv.label(self.settings_screen)
         legal_label.set_text("Trafiklab ToS")
@@ -919,6 +928,24 @@ class Application:
         self.journey_screen_label.align(lv.ALIGN.CENTER, 0, -180)
         self.backgrounds.append(self.journey_screen)
         self.labels.append(self.journey_screen_label)
+
+        # LOAD BUTTON
+        load_journeys_button = lv.button(self.settings_screen)
+        load_journeys_button.set_pos(300, 200)
+        load_journeys_button.set_size(200, 50)
+        load_journeys_button.set_style_border_width(2, 0)
+        self.controls.append(load_journeys_button)
+
+        load_journeys_label = lv.label(load_journeys_button)
+        load_journeys_label.set_text("LOAD")
+        load_journeys_label.center()
+        self.labels.append(load_journeys_label)
+
+        load_journeys_button.add_event_cb(
+            lambda _event: self.refresh_journeys(),
+            lv.EVENT.CLICKED,
+            None,
+        )
 
     def create_ui(self):
         'Function: Creates UI'
