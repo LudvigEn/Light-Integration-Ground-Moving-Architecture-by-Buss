@@ -360,10 +360,6 @@ class Application:
             ]
         screen.clean()
 
-    def load_journeys(self):
-        self.journey, _ = find_journey(self.journey_from, self.journey_to)
-        self.refresh_journeys(self.journeys)
-
     def on_tile_changed(self, _event):
         """Runs whenever a tile is changed"""
         if _event.get_target_obj() != self.tileview: # Ensures that we only look at changes to tiles
@@ -921,6 +917,7 @@ class Application:
         )
 
         # LOAD BUTTON
+
         load_journeys_button = lv.button(self.journey_selection_screen)
         load_journeys_button.set_pos(330, 321)
         load_journeys_button.set_size(200, 50)
@@ -933,9 +930,12 @@ class Application:
         self.labels.append(load_journeys_label)
 
         load_journeys_button.add_event_cb(
-            lambda _event: self.load_journeys(),
+            lambda _event: load_journeys(),
             lv.EVENT.CLICKED, None
         )
+        def load_journeys():
+            self.journeys, _ = find_journey(self.journey_from, self.journey_to)
+            self.refresh_journeys(self.journeys)
 
         #### Add for potential Dark/Light mode
         self.backgrounds.append(self.journey_selection_screen)
