@@ -63,30 +63,43 @@ class Application:
     def __init__(self):
         print("Starting application")
         self.display, self.touch, self.handler = start_board()
+        ## QR-CODE HANDLER
         self.image_fs = lv.fs_drv_t()
         fs_driver.fs_register(self.image_fs, "S")
         self.qr_image = None
+        ## FONT
         self.font_16 = lv.binfont_create("S:/fonts/transit_16.bin")
         self.font_16.fallback = lv.font_montserrat_16
         self.font_28 = lv.binfont_create("S:/fonts/transit_28.bin")
         self.font_28.fallback = lv.font_montserrat_28
         self.icon_font_32 = lv.binfont_create("S:/fonts/transit_icons_32.bin")
-        self.dark_mode = True # Dark mode toggle, default on
+        ## KEYBOARD
+        key_map = list("qwertyuiopå") + ["\n"] + list("asdfghjklöä") + ["\n"] # First two row of letters
+        key_map += list("zxcvbnm-") + [lv.SYMBOL.BACKSPACE, "\n"] # Third row of letters (and symbol)
+        key_map += [lv.SYMBOL.CLOSE, lv.SYMBOL.LEFT, " ", lv.SYMBOL.RIGHT, lv.SYMBOL.OK, ""] # Forth row of symbols
+        controls = [4 if key == " " else 1 for key in key_map if key not in ("", "\n")] # Size of keys (space is larger)
+        self.keyboard_layout = key_map, controls # Save the layout
+        ## LIST OF ELEMENTS
         self.backgrounds = [] # List of all backgrounds, for toggling dark-mode
         self.borders = [] # List of all borders (like around boxes), for toggling dark-mode
         self.labels = [] # List of all labels, for toggling dark-mode
         self.controls = [] # List of all controls (buttons/dropdowns), for toggling dark-mode
+        ## DEFAULT VALUES
+        self.dark_mode = True # Dark mode toggle, default on
         self.journey_from: str = "Campus Gräsvik"
         self.journey_to: str = "Landsvägsgatan"
         self.journeys: list = None
         self.default_stop = "Campus Gräsvik"
         self.default_transport_type = "BUS"
+        ## TIMER
         self.refresh_started: int = -100000
         self.departure_timer = None
         self.q_time = None
+        ## STOPS
         module_dir = __file__.replace("\\", "/").rpartition("/")[0] or "."
         with open(module_dir + "/STOPS.json", "r", encoding="utf-8") as file:
             self.STOPS = json.load(file)
+        ## WIFI
         self.wifi_name: str = self.connect_wifi() or "Offline"
         self.create_ui() # Function to trigger creation of UI
         log("student application ready")
@@ -171,7 +184,7 @@ class Application:
         results.get_list().set_style_text_font(self.font_16, 0)
         results.get_list().set_style_max_height(80, 0) # We can't fit more options with the keyboard in the way
 
-        # STATUS-PANEL
+        # STATUS-LABEL
         status = lv.label(panel)
         status.set_pos(20, 130)
         status.set_width(560)
@@ -181,11 +194,8 @@ class Application:
         keys.align(lv.ALIGN.BOTTOM_MID, 0 ,0) # Anchor to bottom mid
         keys.set_style_text_font(self.font_16, lv.PART.ITEMS) # Font of keys on keyboard, lv.PART.ITEMS targets the keys (not the keyboard itself)
         keys.set_style_bg_color(lv.color_hex(0x000000), 0) # Black background
-        key_map = list("qwertyuiopå") + ["\n"] + list("asdfghjklöä") + ["\n"] # First two row of letters
-        key_map += list("zxcvbnm-") + [lv.SYMBOL.BACKSPACE, "\n"] # Third row of letters (and symbol)
-        key_map += [lv.SYMBOL.CLOSE, lv.SYMBOL.LEFT, " ", lv.SYMBOL.RIGHT, lv.SYMBOL.OK, ""] # Forth row of symbols
-        controls = [4 if key == " " else 1 for key in key_map if key not in ("", "\n")] # Size of keys (space is larger)
-        keys.set_map(lv.keyboard.MODE.USER_1, key_map, controls) # Apply our custom key-map as the keyboard layout
+        key_map, controls = self.keyboard_layout # Fetch our keyboard layout
+        keys.set_map(lv.keyboard.MODE.USER_1, key_map, controls) # Apply our keyboard-layout
         keys.set_mode(lv.keyboard.MODE.USER_1) # Display our custom layout
         keys.set_textarea(field)
 
@@ -211,12 +221,12 @@ class Application:
                 results.set_selected(
                     matches.index(selected) if selected in matches else 0
                 )
-                status.set_text(f"{len(matches)} matching stops")
+                status.set_text(f"{len(matches)} matching stops") # Number of matching stops as status
             else:
-                results.add_state(lv.STATE.DISABLED)
-                status.set_text("No matching stops")
+                results.add_state(lv.STATE.DISABLED) # Disables scrolling an empty dropdown.
+                status.set_text("No matching stops") # Update Status text to visualize issue
 
-        self.search_keyboard_buffers = (key_map, controls)
+        self.search_keyboard_buffers = (key_map, controls) # Keeps
         field.add_event_cb(
             filter_names, # Update the filtered dropdown...
             lv.EVENT.VALUE_CHANGED, # ... when the field is modified.
