@@ -397,6 +397,7 @@ class Application:
 
     def refresh_departures(self):
         """To update dep"""
+        log("Load Departures")
         self.stop_departure_timer()
         self.q_time = None
         self.destroy_screen(self.dep_scr) # Out with the old and in with the new
@@ -757,7 +758,8 @@ class Application:
         load_settings_label.center()
         self.labels.append(load_settings_label)
 
-        reset_settings_button.add_event_cb(
+        load_settings_button.add_event_cb(
+            # lambda _event: log("Button pressed"),
             lambda _event: self.refresh_departures(),
             lv.EVENT.CLICKED,
             None,
@@ -930,7 +932,7 @@ class Application:
         self.labels.append(self.journey_screen_label)
 
         # LOAD BUTTON
-        load_journeys_button = lv.button(self.settings_screen)
+        load_journeys_button = lv.button(self.journey_selection_screen)
         load_journeys_button.set_pos(300, 200)
         load_journeys_button.set_size(200, 50)
         load_journeys_button.set_style_border_width(2, 0)
@@ -942,7 +944,7 @@ class Application:
         self.labels.append(load_journeys_label)
 
         load_journeys_button.add_event_cb(
-            lambda _event: self.refresh_journeys(),
+            lambda _event: self.refresh_journeys(self.journeys),
             lv.EVENT.CLICKED,
             None,
         )
