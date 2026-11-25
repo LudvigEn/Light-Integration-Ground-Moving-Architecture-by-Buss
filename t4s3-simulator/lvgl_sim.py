@@ -12,9 +12,9 @@ from timer_sim import NO_TIMER_READY, Timer as timer_t, TimerManager
 
 OPA = SimpleNamespace(COVER=255, TRANSP=0)
 DIR = SimpleNamespace(NONE=0, LEFT=1, RIGHT=2, TOP=4, BOTTOM=8, HOR=3, VER=12, ALL=15)
-EVENT = SimpleNamespace(CLICKED=1, VALUE_CHANGED=2, ALL=0)
-STATE = SimpleNamespace(DEFAULT=0, CHECKED=1, DISABLED=2)
-PART = SimpleNamespace(MAIN=0, SELECTED=0x30000)
+EVENT = SimpleNamespace(CLICKED=1, VALUE_CHANGED=2, FOCUSED=3, DEFOCUSED=4, READY=5, CANCEL=6, ALL=0)
+STATE = SimpleNamespace(DEFAULT=0, CHECKED=1, DISABLED=2, FOCUSED=4)
+PART = SimpleNamespace(MAIN=0, SELECTED=0x30000, ITEMS=0x20000, CURSOR=0x60000)
 ANIM = SimpleNamespace(OFF=0, ON=1)
 SCROLLBAR_MODE = SimpleNamespace(OFF=0)
 ALIGN = SimpleNamespace(CENTER=0, TOP_LEFT=1, TOP_MID=2, BOTTOM_MID=3)
@@ -28,6 +28,10 @@ _canvas = None
 _filesystem_root = None
 _filesystem_drivers = {}
 _timer_manager = TimerManager()
+_focused_textarea = None
+_refresh_pending = False
+_refresh_callback = None
+_refreshing = False
 
 
 @contextmanager
@@ -55,6 +59,8 @@ def timer_handler():
     if _timer_manager.running:
         return 1
     _timer_manager.run_due()
+    if _refresh_pending:
+        refr_now(None)
     return _timer_manager.next_delay()
 
 
@@ -179,6 +185,7 @@ def _draw_text(node, x, y, text, color, font, anchor='nw', width=None, slot='tex
     # Retain the existing Tk preview for ordinary built-in text. Custom fonts,
     # fallbacks, and symbols use their actual bitmap data, never OS substitutes.
     if (isinstance(font, BuiltinFont) and font.fallback is None
+            and '\t' not in str(text)
             and all(ord(char) < 0xF000 for char in str(text))):
         options = {'width': width} if width is not None else {}
         return _canvas.create_text(x, y, text=font_text(text, font), fill=color,
@@ -212,6 +219,28 @@ def screen_active():
 scr_act = screen_active
 
 
+def refr_now(display):
+    """Flush the current canvas without running timers or application events."""
+    global _refresh_pending, _refreshing
+    if display is not None:
+        raise NotImplementedError('The simulator supports one display; pass None to refr_now')
+    if _canvas is None:
+        raise RuntimeError('No simulated display is configured')
+    if _refreshing:
+        raise RuntimeError('The simulated display is already being refreshed')
+    _refreshing = True
+    _refresh_pending = False
+    try:
+        if _refresh_callback is not None:
+            _refresh_callback()
+        else:
+            render()
+        # Flush Tk drawing, without processing further input or timers.
+        _canvas.update_idletasks()
+    finally:
+        _refreshing = False
+
+
 class obj:
     FLAG = SimpleNamespace(CLICKABLE=1, HIDDEN=2, SCROLLABLE=4)
 
@@ -224,6 +253,7 @@ class obj:
         self.width, self.height = 100, 50
         self.bg, self._fg, self._font = None, None, None
         self.border_width, self.border_color = 0, '#000000'
+        self._alignment = ALIGN.TOP_LEFT
         self.centered = False
         self.hidden = False
         self.flags = self.FLAG.SCROLLABLE
@@ -234,7 +264,9 @@ class obj:
         self.text = None
         self._text_images = {}
         self._explicit_width = False
+        self._explicit_height = False
         self._ext_click_area = 0
+        self.max_height = None
 
     @property
     def fg(self):
@@ -258,6 +290,7 @@ class obj:
     def set_size(self, width, height):
         self.width, self.height = width, height
         self._explicit_width = True
+        self._explicit_height = True
 
     def set_width(self, width):
         self.width = width
@@ -265,19 +298,61 @@ class obj:
 
     def set_height(self, height):
         self.height = height
+        self._explicit_height = True
+
+    def get_width(self):
+        return self.width
+
+    def get_height(self):
+        return self.height
+
+    def update_layout(self):
+        for child in self.children:
+            child.update_layout()
+
+    def invalidate(self):
+        """Queue a redraw of this object's visible area, including its children."""
+        global _refresh_pending
+        ancestor = self
+        while ancestor is not None:
+            if ancestor.hidden:
+                return
+            if hasattr(ancestor, 'coord') and ancestor.coord != ancestor.parent.active:
+                return
+            if ancestor is _screen:
+                _refresh_pending = True
+                return
+            ancestor = ancestor.parent
+
+    def set_style_max_height(self, height, selector):
+        if selector != PART.MAIN:
+            raise NotImplementedError('Only MAIN max_height is supported')
+        self.max_height = int(height)
 
     def set_pos(self, x, y):
         self.x, self.y = x, y
-        self.centered = False
 
     def center(self):
-        self.centered = True
+        self.align(ALIGN.CENTER)
 
     def align(self, alignment, x=0, y=0):
-        if alignment != ALIGN.CENTER:
-            raise NotImplementedError('Only ALIGN.CENTER is implemented')
-        self.center()
+        if alignment not in (ALIGN.CENTER, ALIGN.TOP_LEFT, ALIGN.TOP_MID, ALIGN.BOTTOM_MID):
+            raise NotImplementedError('Only CENTER, TOP_LEFT, TOP_MID and BOTTOM_MID alignment is supported')
+        self._alignment = alignment
+        self.centered = alignment == ALIGN.CENTER
         self.x, self.y = x, y
+
+    def _aligned_position(self):
+        """Resolve anchor offsets using the current widget and parent sizes."""
+        x, y = self.x, self.y
+        if self.parent is not None:
+            if self._alignment in (ALIGN.CENTER, ALIGN.TOP_MID, ALIGN.BOTTOM_MID):
+                x += (self.parent.width - self.width) / 2
+            if self._alignment == ALIGN.CENTER:
+                y += (self.parent.height - self.height) / 2
+            elif self._alignment == ALIGN.BOTTOM_MID:
+                y += self.parent.height - self.height
+        return x, y
 
     def set_style_bg_color(self, color, selector):
         self.bg = color
@@ -354,9 +429,8 @@ class obj:
         for child in self.children:
             if child.hidden:
                 continue
-            y = child.y
-            if child.centered:
-                y += (self.height - child.height) / 2
+            child.update_layout()
+            _x, y = child._aligned_position()
             bottom = max(bottom, y + child.height)
         return max(0, bottom - self.height)
 
@@ -389,6 +463,10 @@ class obj:
             self.send_event(EVENT.CLICKED)
 
     def delete(self):
+        global _focused_textarea
+        self.clean()
+        if self is _focused_textarea:
+            _focused_textarea = None
         self._text_images.clear()
         if self.parent:
             self.parent.children.remove(self)
@@ -396,7 +474,6 @@ class obj:
     def clean(self):
         """Delete all children while keeping the container itself."""
         for child in list(self.children):
-            child.clean()
             child.delete()
 
 
@@ -404,12 +481,275 @@ class label(obj):
     def __init__(self, parent):
         super().__init__(parent)
         self.text = ''
+        self._measured_text = None
 
     def set_text(self, text):
         self.text = str(text)
 
     def get_text(self):
         return self.text
+
+    def update_layout(self):
+        width = self.width if self._explicit_width else None
+        key = (self.text, font_signature(self.font), width)
+        if self._measured_text is None or self._measured_text[0] != key:
+            size = render_text(self.text, self.font, (0, 0, 0), width=width).size
+            self._measured_text = key, size
+        else:
+            size = self._measured_text[1]
+        if not self._explicit_width:
+            self.width = size[0]
+        if not self._explicit_height:
+            self.height = size[1]
+
+    def get_width(self):
+        self.update_layout()
+        return self.width
+
+    def get_height(self):
+        self.update_layout()
+        return self.height
+
+
+class textarea(obj):
+    """Editable text with a Unicode character cursor and LVGL change events."""
+
+    CURSOR_LAST = 0x7fff
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.set_size(200, 42)
+        self.add_flag(self.FLAG.CLICKABLE)
+        self.remove_flag(self.FLAG.SCROLLABLE)
+        self._value = ''
+        self.placeholder = ''
+        self.cursor_pos = 0
+        self.one_line = False
+        self.max_length = 0
+        self.accepted_chars = None
+
+    def set_one_line(self, enabled):
+        self.one_line = bool(enabled)
+        if enabled:
+            self.set_text(self._value)
+
+    def set_placeholder_text(self, text):
+        self.placeholder = str(text)
+
+    def set_max_length(self, length):
+        self.max_length = max(0, int(length))
+
+    def set_accepted_chars(self, chars):
+        self.accepted_chars = chars
+
+    def _filter(self, text):
+        return ''.join(char for char in str(text)
+                       if (not self.one_line or char not in '\r\n')
+                       and (self.accepted_chars is None or char in self.accepted_chars))
+
+    def set_text(self, text):
+        value = self._filter(text)
+        if self.max_length:
+            value = value[:self.max_length]
+        changed = value != self._value
+        self._value, self.cursor_pos = value, len(value)
+        if changed:
+            self.send_event(EVENT.VALUE_CHANGED)
+
+    def get_text(self):
+        return self._value
+
+    def set_cursor_pos(self, position):
+        position = int(position)
+        if position < 0:
+            position = len(self._value) + position
+        self.cursor_pos = max(0, min(position, len(self._value)))
+
+    def get_cursor_pos(self):
+        return self.cursor_pos
+
+    def add_text(self, text):
+        text = self._filter(text)
+        if self.max_length:
+            text = text[:max(0, self.max_length - len(self._value))]
+        if not text or self.has_state(STATE.DISABLED):
+            return
+        cursor = self.cursor_pos
+        self._value = self._value[:cursor] + text + self._value[cursor:]
+        self.cursor_pos += len(text)
+        self.send_event(EVENT.VALUE_CHANGED)
+
+    def add_char(self, char):
+        self.add_text(chr(char) if isinstance(char, int) else char)
+
+    def delete_char(self):
+        if self.cursor_pos and not self.has_state(STATE.DISABLED):
+            cursor = self.cursor_pos
+            self._value = self._value[:cursor - 1] + self._value[cursor:]
+            self.cursor_pos -= 1
+            self.send_event(EVENT.VALUE_CHANGED)
+
+    def delete_char_forward(self):
+        if self.cursor_pos < len(self._value) and not self.has_state(STATE.DISABLED):
+            cursor = self.cursor_pos
+            self._value = self._value[:cursor] + self._value[cursor + 1:]
+            self.send_event(EVENT.VALUE_CHANGED)
+
+    def cursor_left(self):
+        self.set_cursor_pos(max(0, self.cursor_pos - 1))
+
+    def cursor_right(self):
+        self.set_cursor_pos(self.cursor_pos + 1)
+
+    def click(self):
+        if not self.has_state(STATE.DISABLED):
+            _focus_textarea(self)
+            super().click()
+
+
+def _focus_textarea(field):
+    global _focused_textarea
+    if field is _focused_textarea:
+        return
+    previous, _focused_textarea = _focused_textarea, field
+    if previous:
+        previous.remove_state(STATE.FOCUSED)
+        previous.send_event(EVENT.DEFOCUSED)
+    if field:
+        field.add_state(STATE.FOCUSED)
+        field.send_event(EVENT.FOCUSED)
+
+
+def handle_key(key, char=''):
+    """Return whether a focused, visible text area consumed desktop input."""
+    field = _focused_textarea
+    if field is None or field.has_state(STATE.DISABLED):
+        return False
+    ancestor = field
+    while ancestor:
+        if ancestor.hidden:
+            return False
+        if hasattr(ancestor, 'coord') and ancestor.coord != ancestor.parent.active:
+            return False
+        ancestor = ancestor.parent
+    actions = {
+        'BackSpace': field.delete_char, 'Delete': field.delete_char_forward,
+        'Left': field.cursor_left, 'Right': field.cursor_right,
+        'Home': lambda: field.set_cursor_pos(0),
+        'End': lambda: field.set_cursor_pos(textarea.CURSOR_LAST),
+        'Return': lambda: field.send_event(EVENT.READY) if field.one_line else field.add_text('\n'),
+        'KP_Enter': lambda: field.send_event(EVENT.READY),
+        'Escape': lambda: field.send_event(EVENT.CANCEL),
+    }
+    if key in actions:
+        actions[key]()
+    elif char and all(character.isprintable() for character in char):
+        field.add_text(char)
+    return True
+
+
+class keyboard(obj):
+    """Touch keyboard using the LVGL text-area binding and custom key maps."""
+
+    MODE = SimpleNamespace(TEXT_LOWER=0, TEXT_UPPER=1, SPECIAL=2, NUMBER=3,
+                           USER_1=4, USER_2=5, USER_3=6, USER_4=7)
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.set_size(600, 200)
+        self.align(ALIGN.BOTTOM_MID)
+        self.remove_flag(self.FLAG.SCROLLABLE)
+        self.add_flag(self.FLAG.CLICKABLE)
+        self.field = None
+        self.mode = self.MODE.TEXT_UPPER
+        self.maps = {}
+
+    def set_textarea(self, field):
+        if field is not None and not isinstance(field, textarea):
+            raise TypeError('A keyboard must be bound to a textarea or None')
+        if field is not None:
+            _focus_textarea(field)
+        elif self.field is _focused_textarea:
+            _focus_textarea(None)
+        self.field = field
+
+    def get_textarea(self):
+        return self.field
+
+    def set_mode(self, mode):
+        if mode not in vars(self.MODE).values():
+            raise ValueError('Unknown keyboard mode')
+        self.mode = mode
+        self._text_images.clear()
+
+    def get_mode(self):
+        return self.mode
+
+    def set_map(self, mode, key_map, controls):
+        keys = list(key_map)
+        count = len([key for key in keys if key not in ('', '\n')])
+        if count != len(controls):
+            raise ValueError('Keyboard controls must have one entry per key')
+        self.maps[mode] = keys, list(controls)
+        self._text_images.clear()
+
+    def _rows(self):
+        if self.mode in self.maps:
+            keys, widths = self.maps[self.mode]
+            rows, row, index = [], [], 0
+            for key in keys:
+                if not key:
+                    break
+                if key == '\n':
+                    rows.append(row)
+                    row = []
+                else:
+                    row.append((key, max(1, int(widths[index]) & 0xF)))
+                    index += 1
+            if row:
+                rows.append(row)
+            return [row for row in rows if row]
+        if self.mode == self.MODE.NUMBER:
+            rows = [list('123'), list('456'), list('789'), ['.', '0', SYMBOL.BACKSPACE]]
+        elif self.mode == self.MODE.SPECIAL:
+            rows = [list('1234567890'), list('+-*/=!?.,:;'), ['abc', SYMBOL.BACKSPACE]]
+        else:
+            upper = self.mode == self.MODE.TEXT_UPPER
+            rows = [list(row.upper() if upper else row) for row in ('qwertyuiop', 'asdfghjkl', 'zxcvbnm')]
+            rows[-1] = ['abc' if upper else 'ABC'] + rows[-1] + [SYMBOL.BACKSPACE]
+        rows.append(['1#' if self.mode not in (self.MODE.SPECIAL, self.MODE.NUMBER) else 'abc',
+                     SYMBOL.CLOSE, SYMBOL.LEFT, ' ', SYMBOL.RIGHT, SYMBOL.OK])
+        return [[(key, 4 if key == ' ' else 1) for key in row] for row in rows]
+
+    def press_key(self, key):
+        if self.has_state(STATE.DISABLED):
+            return
+        if key in ('ABC', 'abc', '1#'):
+            self.set_mode({'ABC': self.MODE.TEXT_UPPER, 'abc': self.MODE.TEXT_LOWER,
+                           '1#': self.MODE.SPECIAL}[key])
+        elif key in (SYMBOL.OK, SYMBOL.CLOSE, SYMBOL.KEYBOARD):
+            code = EVENT.READY if key == SYMBOL.OK else EVENT.CANCEL
+            if self.field is not None:
+                self.field.send_event(code)
+            self.send_event(code)
+        elif self.field is not None:
+            if key == SYMBOL.BACKSPACE:
+                self.field.delete_char()
+            elif key == SYMBOL.LEFT:
+                self.field.cursor_left()
+            elif key == SYMBOL.RIGHT:
+                self.field.cursor_right()
+            elif key == SYMBOL.NEW_LINE:
+                if self.field.one_line:
+                    self.field.send_event(EVENT.READY)
+                else:
+                    self.field.add_text('\n')
+            else:
+                self.field.add_text(key)
+
+    def delete(self):
+        self.set_textarea(None)
+        super().delete()
 
 
 class image(obj):
@@ -538,6 +878,8 @@ class _DropdownList(obj):
         content_height = len(owner.options) * self.row_height
         opens_above = content_height > below and above > below
         available = above if opens_above else below
+        if self.max_height is not None:
+            available = min(available, self.max_height)
         rows = min(len(owner.options), max(1, int(available // self.row_height)))
         self.width = min(owner.width, _screen.width)
         self.height = rows * self.row_height
@@ -690,16 +1032,29 @@ class tileview(obj):
             self.set_tile_by_index(*target)
 
 
-def setup(canvas):
-    global _canvas, _screen
+def setup(canvas, on_refresh=None):
+    global _canvas, _screen, _focused_textarea, _refresh_pending, _refresh_callback
     _canvas = canvas
+    _focused_textarea = None
+    _refresh_pending = False
+    _refresh_callback = on_refresh
     _screen = obj()
     _screen.set_size(600, 450)
     _screen.bg = '#ffffff'
     return _screen
 
 
+def teardown(canvas):
+    """Detach a closed simulator without disturbing another active canvas."""
+    global _canvas, _screen, _focused_textarea, _refresh_pending, _refresh_callback
+    if _canvas is canvas:
+        _canvas = _screen = _focused_textarea = _refresh_callback = None
+        _refresh_pending = False
+
+
 def render():
+    global _refresh_pending
+    _refresh_pending = False
     _canvas.delete('all')
     hits = []
     dropdowns = []
@@ -723,13 +1078,11 @@ def render():
             clip = (0, 0, _screen.width, _screen.height)
         if isinstance(node, image):
             node._update_symbol_size()
-        x, y = px + node.x, py + node.y
-        if node.centered and node.parent:
-            x += node.parent.width / 2
-            y += node.parent.height / 2
-            if node.text is None:
-                x -= node.width / 2
-                y -= node.height / 2
+        # Size-dependent anchors need a label's measured content dimensions.
+        if node.text is not None and node._alignment != ALIGN.TOP_LEFT:
+            node.update_layout()
+        offset_x, offset_y = node._aligned_position()
+        x, y = px + offset_x, py + offset_y
         # Extended touch areas stay within the parent's bounds, as on LVGL.
         # Use the unexpanded bounds to clip children and popup visibility.
         bounds = intersect((x, y, x + node.width, y + node.height), clip)
@@ -752,6 +1105,27 @@ def render():
                                 text='▾', fill=node.fg, anchor='center')
             if node.opened and not node.has_state(STATE.DISABLED) and bounds[0] < bounds[2] and bounds[1] < bounds[3]:
                 dropdowns.append((node, x, y))
+        if isinstance(node, textarea):
+            _canvas.create_rectangle(x, y, x + node.width, y + node.height,
+                                     fill=node.bg or '#ffffff',
+                                     outline='#2196f3' if node.has_state(STATE.FOCUSED) else '#888888')
+            value = node.get_text()
+            start = 0
+            available = max(1, node.width - 20)
+            def text_width(text):
+                return render_text(text, node.font, (0, 0, 0)).width if text else 0
+            if node.one_line:
+                while start < node.cursor_pos and text_width(value[start:node.cursor_pos]) > available:
+                    start += 1
+            caption = value[start:] if value else node.placeholder
+            while caption and text_width(caption) > available:
+                caption = caption[:-1]
+            _draw_text(node, x + 8, y + node.height / 2, caption,
+                       node.fg if value else '#888888', node.font, anchor='w')
+            if node.has_state(STATE.FOCUSED):
+                cursor_x = x + 8 + text_width(value[start:node.cursor_pos])
+                _canvas.create_line(cursor_x, y + 8, cursor_x, y + node.height - 8,
+                                    fill=node.fg, width=1)
         if isinstance(node, switch):
             disabled = node.has_state(STATE.DISABLED)
             track = ('#aaaaaa' if disabled else
@@ -769,8 +1143,10 @@ def render():
                                 y + 3 + diameter,
                                 fill='#dddddd' if disabled else '#ffffff', outline='')
         if node.text is not None:
+            text_x = x + node.width / 2 if node.centered else x
+            text_y = y + node.height / 2 if node.centered else y
             text_item = _draw_text(
-                node, x, y, node.text, node.fg, node.font,
+                node, text_x, text_y, node.text, node.fg, node.font,
                 anchor='center' if node.centered else 'nw',
                 width=node.width if node._explicit_width else None)
             if node.has_flag(obj.FLAG.CLICKABLE):
@@ -781,6 +1157,29 @@ def render():
                     add_hit(node, text_bounds, clip)
         else:
             add_hit(node, (x, y, x + node.width, y + node.height), clip)
+        if isinstance(node, keyboard):
+            rows = node._rows()
+            row_height = node.height / max(1, len(rows))
+            for row_index, row in enumerate(rows):
+                total_width = sum(weight for _key, weight in row)
+                offset = 0
+                for key_index, (key, weight) in enumerate(row):
+                    left = x + node.width * offset / total_width + 2
+                    right = x + node.width * (offset + weight) / total_width - 2
+                    top = y + row_index * row_height + 2
+                    bottom = y + (row_index + 1) * row_height - 2
+                    offset += weight
+                    _canvas.create_rectangle(left, top, right, bottom,
+                                             fill=node.bg or '#e0e5eb', outline='#888888')
+                    _draw_text(node, (left + right) / 2, (top + bottom) / 2,
+                               'Space' if key == ' ' else key,
+                               '#888888' if node.has_state(STATE.DISABLED) else node.fg,
+                               node.font, anchor='center', slot=f'key{row_index}_{key_index}')
+                    touch = obj()
+                    touch.parent = node
+                    touch.add_flag(obj.FLAG.CLICKABLE)
+                    touch.click = lambda k=key, owner=node: owner.press_key(k)
+                    add_hit(touch, (left, top, right, bottom), bounds)
         node.scroll_to_y(node.scroll_y)
         for child in node.children:
             if isinstance(node, tileview) and child.coord != node.active:

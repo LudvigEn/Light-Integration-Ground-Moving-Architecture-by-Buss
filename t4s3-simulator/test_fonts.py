@@ -4,7 +4,7 @@ import struct
 import tkinter as tk
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from PIL import Image
 
@@ -125,6 +125,27 @@ class BinaryFontTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'boundaries'):
             BinaryFont(data)
 
+    def test_extremely_wide_labels_fail_before_allocating_the_bitmap(self):
+        font = self.load()
+        with patch('font_sim.Image.new', wraps=Image.new) as allocate:
+            with self.assertRaisesRegex(ValueError, 'too large.*wrap text'):
+                render_text('W' * 5000, font, '#ffffff')
+        self.assertTrue(all(max(call.args[1]) <= 16384 for call in allocate.call_args_list))
+        # The same text is valid when wrapped into an ordinary screen width.
+        wrapped = render_text('W' * 5000, font, '#ffffff', width=580)
+        self.assertLessEqual(wrapped.width, 580)
+        self.assertGreater(wrapped.height, font.line_height)
+
+    def test_tabs_use_two_space_advances_with_builtin_and_fallback_fonts(self):
+        for font in (BuiltinFont(16), self.load()):
+            for text in ('\tABC', 'A\tB', '\tA\n\tB', '\t\tABC'):
+                for width in (None, 80):
+                    with self.subTest(font=type(font).__name__, text=text, width=width):
+                        actual = render_text(text, font, '#ffffff', width=width)
+                        expected = render_text(text.replace('\t', '  '), font, '#ffffff', width=width)
+                        self.assertEqual(actual.size, expected.size)
+                        self.assertEqual(actual.tobytes(), expected.tobytes())
+
     def test_builtin_fallbacks_do_not_leak_between_runs(self):
         original = lv.font_montserrat_16.fallback
         try:
@@ -214,6 +235,45 @@ class FontRenderingTests(unittest.TestCase):
         caption.set_text(lv.SYMBOL.OK + lv.SYMBOL.WIFI + lv.SYMBOL.PLAY)
         lv.render()
         self.assertIsNot(caption._text_images['text'][1], photo)
+
+    def test_tabbed_labels_use_lvgl_spacing_without_modifying_their_text(self):
+        for font in (lv.font_montserrat_16, self.font):
+            caption = lv.label(self.tile)
+            caption.set_style_text_font(font, 0)
+            caption.set_text('\tABC')
+            lv.render()
+            self.assertEqual(caption.get_text(), '\tABC')
+            photo = caption._text_images['text'][1]
+            expected = render_text('  ABC', font, '#000000')
+            self.assertEqual(self.photo_pixels(photo).tobytes(), expected.tobytes())
+
+    def test_wrapped_label_heights_space_rows_and_enable_tile_scrolling(self):
+        captions = []
+        y = 40
+        text = ('A long journey description with å, ä and ö that wraps.\n' * 6).strip()
+        for _ in range(3):
+            caption = lv.label(self.tile)
+            caption.set_width(250)
+            caption.set_text(text)
+            caption.update_layout()
+            self.assertEqual(caption.get_height(), render_text(text, self.font, '#000000', width=250).height)
+            caption.set_pos(10, y)
+            y += caption.get_height() + 16
+            captions.append(caption)
+        lv.render()
+        for first, second in zip(captions, captions[1:]):
+            self.assertEqual(second.y, first.y + first.get_height() + 16)
+        self.assertGreater(self.tile.scroll_limit_y(), 0)
+        previous = captions[0].get_height()
+        self.tile.set_style_text_font(lv.font_montserrat_28, 0)
+        self.assertGreater(captions[0].get_height(), previous)
+
+    def test_label_explicit_dimensions_are_preserved(self):
+        caption = lv.label(self.tile)
+        caption.set_size(150, 80)
+        caption.set_text('First\nSecond')
+        caption.update_layout()
+        self.assertEqual((caption.get_width(), caption.get_height()), (150, 80))
 
     def test_image_symbol_sources_dummy_prefix_and_source_changes(self):
         icon = lv.image(self.tile)
