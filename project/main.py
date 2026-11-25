@@ -360,6 +360,10 @@ class Application:
             ]
         screen.clean()
 
+    def load_journeys(self):
+        self.journey, _ = find_journey(self.journey_from, self.journey_to)
+        self.refresh_journeys(self.journeys)
+
     def on_tile_changed(self, _event):
         """Runs whenever a tile is changed"""
         if _event.get_target_obj() != self.tileview: # Ensures that we only look at changes to tiles
@@ -588,7 +592,6 @@ class Application:
     def create_settings_screen(self):
         """Function: Create a settings screen"""
 
-
         # SETTINGS HEADER
         settings_header = lv.label(self.settings_screen)
         settings_header.set_pos(30, 20)
@@ -748,7 +751,7 @@ class Application:
 
         # LOAD BUTTON
         load_settings_button = lv.button(self.settings_screen)
-        load_settings_button.set_pos(300, 200)
+        load_settings_button.set_pos(217, 329)
         load_settings_button.set_size(200, 50)
         load_settings_button.set_style_border_width(2, 0)
         self.controls.append(load_settings_button)
@@ -916,6 +919,24 @@ class Application:
             lv.EVENT.CLICKED,
             None
         )
+
+        # LOAD BUTTON
+        load_journeys_button = lv.button(self.journey_selection_screen)
+        load_journeys_button.set_pos(357, 321)
+        load_journeys_button.set_size(200, 50)
+        load_journeys_button.set_style_border_width(2, 0)
+        self.controls.append(load_journeys_button)
+
+        load_journeys_label = lv.label(load_journeys_button)
+        load_journeys_label.set_text("LOAD")
+        load_journeys_label.center()
+        self.labels.append(load_journeys_label)
+
+        load_journeys_button.add_event_cb(
+            lambda _event: self.load_journeys(),
+            lv.EVENT.CLICKED, None
+        )
+
         #### Add for potential Dark/Light mode
         self.backgrounds.append(self.journey_selection_screen)
         log("journey-screen created")
@@ -930,24 +951,6 @@ class Application:
         self.journey_screen_label.align(lv.ALIGN.CENTER, 0, -180)
         self.backgrounds.append(self.journey_screen)
         self.labels.append(self.journey_screen_label)
-
-        # LOAD BUTTON
-        load_journeys_button = lv.button(self.journey_selection_screen)
-        load_journeys_button.set_pos(300, 200)
-        load_journeys_button.set_size(200, 50)
-        load_journeys_button.set_style_border_width(2, 0)
-        self.controls.append(load_journeys_button)
-
-        load_journeys_label = lv.label(load_journeys_button)
-        load_journeys_label.set_text("LOAD")
-        load_journeys_label.center()
-        self.labels.append(load_journeys_label)
-
-        load_journeys_button.add_event_cb(
-            lambda _event: self.refresh_journeys(self.journeys),
-            lv.EVENT.CLICKED,
-            None,
-        )
 
     def create_ui(self):
         'Function: Creates UI'
