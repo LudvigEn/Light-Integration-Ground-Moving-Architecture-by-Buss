@@ -653,6 +653,7 @@ class ImageTests(unittest.TestCase):
 
     def test_clickable_labels_open_qr_and_return_using_visible_text_bounds(self):
         legal = lv.label(self.settings)
+        default_label_width = legal.width
         legal.set_text('Tap for Trafiklab ToS')
         legal.set_pos(200, 400)
         legal.add_flag(lv.obj.FLAG.CLICKABLE)
@@ -673,7 +674,7 @@ class ImageTests(unittest.TestCase):
                     and self.canvas.itemcget(item, 'text') == legal.get_text())
         x1, y1, x2, y2 = self.canvas.bbox(text)
         # The visible link extends beyond the simulator's default label width.
-        self.assertGreater(x2 - 2, legal.x + legal.width)
+        self.assertGreater(x2 - 2, legal.x + default_label_width)
         touch = SimpleNamespace(x=x2 - 2, y=(y1 + y2) / 2)
         simulator.down(touch)
         simulator.up(touch)

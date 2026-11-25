@@ -253,6 +253,7 @@ class obj:
         self.width, self.height = 100, 50
         self.bg, self._fg, self._font = None, None, None
         self.border_width, self.border_color = 0, '#000000'
+        self._alignment = ALIGN.TOP_LEFT
         self.centered = False
         self.hidden = False
         self.flags = self.FLAG.SCROLLABLE
@@ -330,16 +331,28 @@ class obj:
 
     def set_pos(self, x, y):
         self.x, self.y = x, y
-        self.centered = False
 
     def center(self):
-        self.centered = True
+        self.align(ALIGN.CENTER)
 
     def align(self, alignment, x=0, y=0):
-        if alignment != ALIGN.CENTER:
-            raise NotImplementedError('Only ALIGN.CENTER is implemented')
-        self.center()
+        if alignment not in (ALIGN.CENTER, ALIGN.TOP_LEFT, ALIGN.TOP_MID, ALIGN.BOTTOM_MID):
+            raise NotImplementedError('Only CENTER, TOP_LEFT, TOP_MID and BOTTOM_MID alignment is supported')
+        self._alignment = alignment
+        self.centered = alignment == ALIGN.CENTER
         self.x, self.y = x, y
+
+    def _aligned_position(self):
+        """Resolve anchor offsets using the current widget and parent sizes."""
+        x, y = self.x, self.y
+        if self.parent is not None:
+            if self._alignment in (ALIGN.CENTER, ALIGN.TOP_MID, ALIGN.BOTTOM_MID):
+                x += (self.parent.width - self.width) / 2
+            if self._alignment == ALIGN.CENTER:
+                y += (self.parent.height - self.height) / 2
+            elif self._alignment == ALIGN.BOTTOM_MID:
+                y += self.parent.height - self.height
+        return x, y
 
     def set_style_bg_color(self, color, selector):
         self.bg = color
@@ -417,9 +430,7 @@ class obj:
             if child.hidden:
                 continue
             child.update_layout()
-            y = child.y
-            if child.centered:
-                y += (self.height - child.height) / 2
+            _x, y = child._aligned_position()
             bottom = max(bottom, y + child.height)
         return max(0, bottom - self.height)
 
@@ -646,6 +657,7 @@ class keyboard(obj):
     def __init__(self, parent):
         super().__init__(parent)
         self.set_size(600, 200)
+        self.align(ALIGN.BOTTOM_MID)
         self.remove_flag(self.FLAG.SCROLLABLE)
         self.add_flag(self.FLAG.CLICKABLE)
         self.field = None
@@ -1066,13 +1078,11 @@ def render():
             clip = (0, 0, _screen.width, _screen.height)
         if isinstance(node, image):
             node._update_symbol_size()
-        x, y = px + node.x, py + node.y
-        if node.centered and node.parent:
-            x += node.parent.width / 2
-            y += node.parent.height / 2
-            if node.text is None:
-                x -= node.width / 2
-                y -= node.height / 2
+        # Size-dependent anchors need a label's measured content dimensions.
+        if node.text is not None and node._alignment != ALIGN.TOP_LEFT:
+            node.update_layout()
+        offset_x, offset_y = node._aligned_position()
+        x, y = px + offset_x, py + offset_y
         # Extended touch areas stay within the parent's bounds, as on LVGL.
         # Use the unexpanded bounds to clip children and popup visibility.
         bounds = intersect((x, y, x + node.width, y + node.height), clip)
@@ -1133,8 +1143,10 @@ def render():
                                 y + 3 + diameter,
                                 fill='#dddddd' if disabled else '#ffffff', outline='')
         if node.text is not None:
+            text_x = x + node.width / 2 if node.centered else x
+            text_y = y + node.height / 2 if node.centered else y
             text_item = _draw_text(
-                node, x, y, node.text, node.fg, node.font,
+                node, text_x, text_y, node.text, node.fg, node.font,
                 anchor='center' if node.centered else 'nw',
                 width=node.width if node._explicit_width else None)
             if node.has_flag(obj.FLAG.CLICKABLE):

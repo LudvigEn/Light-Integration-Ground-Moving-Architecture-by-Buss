@@ -95,6 +95,11 @@ READY/CANCEL events, and bounded dropdown lists for touch search popups. Tap a
 text field to edit it using the on-screen keyboard or your computer keyboard.
 Left/Right move the text cursor while editing; Enter confirms and Escape cancels.
 
+`align()` supports `CENTER`, `TOP_LEFT`, `TOP_MID` and `BOTTOM_MID`, with anchors
+that follow widget and parent resizing. Keyboards start bottom-middle aligned,
+as on the device; use `keys.align(lv.ALIGN.BOTTOM_MID, 0, 0)` to keep the keyboard
+inside the panel without a downward offset.
+
 Try the three-selector example from a repository checkout, without modifying
 or rebuilding the device application:
 

@@ -57,8 +57,8 @@ def add_dropdown_search(parent, dropdown, font, x, y):
         status.set_width(560)
 
         keys = lv.keyboard(panel)
-        keys.set_pos(0, 210)
         keys.set_size(600, 240)
+        keys.align(lv.ALIGN.BOTTOM_MID, 0, 0)
         keys.set_style_text_font(font, lv.PART.ITEMS)
         key_map = list("qwertyuiopå") + ["\n"] + list("asdfghjklöä") + ["\n"]
         key_map += list("zxcvbnm-") + [lv.SYMBOL.BACKSPACE, "\n"]
