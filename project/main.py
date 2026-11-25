@@ -58,6 +58,7 @@ import fs_driver # pylint: disable=import-error
 
 VERSION = 0.5 # Version-control
 
+
 class Application:
     """Class for application"""
     def __init__(self):
@@ -197,7 +198,7 @@ class Application:
         key_map, controls = self.keyboard_layout # Fetch our keyboard layout
         keys.set_map(lv.keyboard.MODE.USER_1, key_map, controls) # Apply our keyboard-layout
         keys.set_mode(lv.keyboard.MODE.USER_1) # Display our custom layout
-        keys.set_textarea(field)
+        keys.set_textarea(field) # Output for keyboard
 
         def normalize(text):
             """Replaces text with lower-cases, to avoid case-matching"""
@@ -379,7 +380,7 @@ class Application:
 
         if previous_tile == self.journey_selection_screen and current_tile == self.journey_screen:
             log("Swap to Journey-screen")
-            self.journeys, _ = find_journey(self.journey_from, self.journey_to)
+            self.journeys, _ = find_journey(self.journey_from, self.journey_to) # Fetch data on Journeys between from and to.
             self.refresh_journeys(self.journeys)
 
     def refresh_journeys(self, journeys):

@@ -107,6 +107,7 @@ class Leg:
         else:
             return None
 
+
 class Journey:
     """Data on Journey(Resa) -granularity"""
     def __init__(self, data, names_by_id):
@@ -177,6 +178,7 @@ class Journey:
     def get_legs(self):
         """Returns Legs (part of Journey)"""
         return self.legs
+
 
 def read_data(stop_id, test=False):
     """Function to connect to, and fetch API-data"""
