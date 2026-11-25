@@ -1,4 +1,4 @@
-"""File for running main-code used in the project"""
+"""File for running main-code used in the project."""
 import sys # Access system utilities, including exception reporting
 if (
     __name__ == "__main__"
@@ -40,8 +40,10 @@ import fs_driver # pylint: disable=import-error
 VERSION = 0.5 # Version-control
 
 class Application:
-    """Class for application"""
+    """Class for application."""
+
     def __init__(self):
+        """Initialize the application and its settings."""
         print("Starting application")
         self.display, self.touch, self.handler = start_board()
         self.image_fs = lv.fs_drv_t() # Image-handler
@@ -83,7 +85,7 @@ class Application:
             log(log_written)
 
     def reset_settings(self):
-        """Function to reset settings by reloading setting screen"""
+        """Function to reset settings by reloading setting screen."""
         log("Reset Settings called")
         self.read_settings() # Fetch saved settings
         self.destroy_screen(self.settings_screen) # Destroy and...
@@ -93,7 +95,7 @@ class Application:
 
     def read_settings(self):
         """If a settings.txt file is present, read the data from it
-        If there are not 3 lines of text in it; revert to some defaults
+        If there are not 3 lines of text in it; revert to some defaults.
         """
         try:
             with open("settings.txt", "r", encoding="utf-8") as file:
@@ -111,7 +113,7 @@ class Application:
         self.dark_mode = lines[2] == "True" # Dark mode is the third line
 
     def open_search(self, dropdown):
-        """Run on Search-button pressed"""
+        """Run on Search-button pressed."""
         font = self.font_16
         dropdown.close()
         names = dropdown.get_options().splitlines()
@@ -167,7 +169,7 @@ class Application:
         keys.set_textarea(field)
 
         def normalize(text):
-            """Replaces text with lower-cases, to avoid case-matching"""
+            """Replaces text with lower-cases, to avoid case-matching."""
             return (
                 text.replace("Å", "å")
                 .replace("Ä", "ä")
@@ -219,7 +221,7 @@ class Application:
         )
 
     def apply_colors(self, screen="All"):
-        """Function: Applies black/white to all elements depending on if Dark Mode is enabled or not"""
+        """Function: Applies black/white to all elements depending on if Dark Mode is enabled or not."""
         background_color = lv.color_hex(0x000000 if self.dark_mode else 0xFFFFFF) # Background color, if Dark-mode: black, else white
         foreground_color = lv.color_hex(0xFFFFFF if self.dark_mode else 0x000000) # Foreground (topmost layer) color, if Dark-mode: white, else black
 
@@ -264,7 +266,7 @@ class Application:
         self.apply_colors() ## Apply colors to Backgrounds, Borders and Labels
 
     def create_title_screen(self):
-        """Function: Startup-screen"""
+        """Function: Startup-screen."""
         self.title_screen = self.tileview.add_tile(0, 0, lv.DIR.RIGHT) # Create a screen on our tileview
 
         # Create labels for title-screen
@@ -297,6 +299,7 @@ class Application:
     def clear_departures(self):
         """Clears existing departure data to be replaced with new data."""
         def belongs_to_departures(widget):
+
             parent = widget.get_parent()
             while parent is not None:
                 if parent == self.dep_scr:
@@ -313,7 +316,7 @@ class Application:
         # self.dep_scr.scroll_to_y(0, )
 
     def on_tile_changed(self, _event):
-        """Runs whenever a tile is changed"""
+        """Runs whenever a tile is changed."""
         if _event.get_target_obj() != self.tileview: # Ensures that we only look at changes to tiles
             return
 
@@ -327,8 +330,7 @@ class Application:
             log("on_tile_changed called")
 
     def refresh_departures(self):
-        """To update dep"""
-
+        """To update departures."""
         self.clear_departures()
 
         transport_types = sorted(self.STOPS)
@@ -375,7 +377,6 @@ class Application:
 
     def create_departure_screen(self, stop):
         """Function: Show departures on a specific stop."""
-
         ## Name of bus-stop
         header = lv.label(self.dep_scr) # Add a label to the Departure screen
         header.set_text(stop.name) # Name of stop as header
@@ -490,7 +491,7 @@ class Application:
         self.refresh_started = time.ticks_ms()
 
     def create_settings_screen(self):
-        """Function: Create a settings screen"""
+        """Function: Create a settings screen."""
         self.settings_screen = self.tileview.add_tile(1, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a screen on our tileview
 
         # SETTINGS HEADER
@@ -544,8 +545,9 @@ class Application:
         self.default_transport_type = transport_types[selected_transport_type]
         self.transport_type_dropdown = transport_type_dropdown
         self.controls.append(transport_type_dropdown)
+
         def on_transport_type_changed(_event):
-            """What to do when a different value is selected"""
+            """What to do when a different value is selected."""
             names = transport_type_dropdown.get_options().splitlines()
             index = transport_type_dropdown.get_selected()
             if 0 <= index < len(names):
@@ -582,8 +584,9 @@ class Application:
         self.default_stop = stop_names[selected_stop]
         self.stop_dropdown = stop_dropdown
         self.controls.append(stop_dropdown)
+
         def on_stop_changed(_event):
-            """What to do when a different value is selected"""
+            """What to do when a different value is selected."""
             names = stop_dropdown.get_options().splitlines()
             index = stop_dropdown.get_selected()
             if 0 <= index < len(names):
@@ -652,7 +655,7 @@ class Application:
         log("settings-screen created")
 
     def create_qr_legal_screen(self):
-        """Shows a QR-code for the legal-text related to Trfa"""
+        """Shows a QR-code for the legal-text related to Trfa."""
         self.qr_scr = self.tileview.add_tile(1, 1, lv.DIR.NONE)
         self.backgrounds.append(self.qr_scr)
 
@@ -673,7 +676,8 @@ class Application:
         self.qr_image.center()
 
     def create_journey_screen(self):
-        self.journey_screen = self.tileview.add_tile(0, 0, lv.DIR.RIGHT)
+        """Creates a journey screen."""
+        self.journey_screen = self.tileview.add_tile(0, 0, lv.DIR.RIGHT) #
         self.journey_screen_label = lv.label(self.journey_screen)
         self.journey_screen_label.set_text("Reseskärm")
         self.journey_screen_label.align(lv.ALIGN.CENTER, 0, -180)
@@ -681,7 +685,7 @@ class Application:
         self.labels.append(self.journey_screen_label)
 
     def create_ui(self):
-        'Function: Creates UI'
+        """Function: Creates UI."""
         #api_data = read_data(False) ## IF TRUE, ONLY USE TEST-DATA INSTEAD (i.e. don't use ACTUAL data)
         self.tileview = lv.tileview(lv.screen_active()) ## Creates frame to add tiles to
         self.tileview.set_size(600, 450) ## That is the size 600 in x and 450 in y
@@ -710,7 +714,7 @@ class Application:
 
     @staticmethod
     def connect_wifi():
-        'Function: Connects to WiFi'
+        """Function: Connects to WiFi."""
         # log("connecting to Wi-Fi SSID: " + WIFI_SSID)
         # station = network.WLAN(network.STA_IF)
         # station.active(True)

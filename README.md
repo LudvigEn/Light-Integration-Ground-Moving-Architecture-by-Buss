@@ -6,11 +6,38 @@ Is a device that helps the user find different stops and routes by bus, train an
 
 ## Application Features
 
+
+
 ## Screen Descriptions
+
+0. L.I.G.M.A.B screen:
+Shows group number, names and version of the application.
+
+1. Settings screen:
+Shows transportation types and the stop you want to go from. 
+
+You can switch to light mode from default dark mode.
+
+You can then save the settings.  
+
+You can see trafiklab terms of service by scanning the qr-code that pops up when clicking Trafiklab Tos.
+
+2. Departurure screen:
+Shows transport type, estimated time of arrival, destination and delay in seconds.
+
+-1. Journey Selection Screen:
+When you have choosen stransport type and selected a stop you can go to journey selection screen and shoose from and to stop.
+
+-2. Top 5 Journeys:
+From journey selection screen you now see different stops on that specific journey with all different routes combined to get the top 5 journeys. 
 
 ## Navigation
 
+Swipe through screen
+
 ## Trafiklab API Integration
+
+Data is collected from trafiklab web
 
 
 # ESP32-T4-S3-MicroPython-Template

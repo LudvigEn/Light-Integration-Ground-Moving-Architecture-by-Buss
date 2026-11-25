@@ -1,4 +1,4 @@
-"""Module to fetch, and return data"""
+"""Module to fetch, and return data."""
 import json
 from secrets import TRAFIKLAB_API_KEY, RESROBOT_API_KEY # pylint:disable=no-name-in-module
 import requests
@@ -6,13 +6,12 @@ try:
     from debug_log import log
 except ImportError:
     def log(message):
-        """Print diagnostics when the device logger is unavailable"""
+        """Print diagnostics when the device logger is unavailable."""
         print(message)
 
 
 class Route:
-    """Data on Route (Linje) -granularity
-    """
+    """Data on Route (Linje) -granularity."""
     def __init__(self):
         self.designation: str = None
         self.direction: str = None
@@ -23,8 +22,7 @@ class Route:
 
 
 class Departure:
-    """Data on Departure (Avgång) -granularity
-    """
+    """Data on Departure (Avgång) -granularity."""
     def __init__(self):
         self.scheduled: str = None
         self.realtime: str = None
@@ -34,8 +32,7 @@ class Departure:
 
 
 class Stop:
-    """Data on Stop (Hållplats) -granularity
-    """
+    """Data on Stop (Hållplats) -granularity."""
     def __init__(self):
         self.id = None
         self.name = None
@@ -45,7 +42,7 @@ class Stop:
 
 
 class Leg:
-    """Data on Leg(Part of journey) -granularity"""
+    """Data on Leg(Part of journey) -granularity."""
     def __init__(self, data, names_by_id):
         origin = data["Origin"]
         destination = data["Destination"]
@@ -86,7 +83,7 @@ class Leg:
 
 
 class Journey:
-    """Data on Journey(Resa) -granularity"""
+    """Data on Journey(Resa) -granularity."""
     def __init__(self, data, names_by_id):
         origin = data["Origin"]
         destination = data["Destination"]
@@ -137,7 +134,7 @@ class Journey:
 
 
 def read_data(stop_id, test=False):
-    """Function to connect to, and fetch API-data"""
+    """Function to connect to, and fetch API-data."""
 
     if test: # This is just for test-cases (so we don't make an absurd amount of API-calls)
         with open("../assets/test_data/stop_740032188_formatted.json", "r", encoding="utf-8") as file:
@@ -164,7 +161,7 @@ def read_data(stop_id, test=False):
 
 def parse_data(payload):
     """Takes indata from API-call,
-    then divides them up into Route[Stop[Departures]]
+    then divides them up into Route[Stop[Departures]].
     """
     query_time = payload["timestamp"]
     stops_by_id = {}
@@ -217,7 +214,7 @@ def parse_data(payload):
 
 
 def find_journey(stop_a, stop_b, transport_type="ALL"):
-    """Uses ResRobot API to find Journeys between stop_a and stop_b"""
+    """Uses ResRobot API to find Journeys between stop_a and stop_b."""
 
     #### FETCH STOP IDS
     module_dir = __file__.replace("\\", "/").rpartition("/")[0] or "."
