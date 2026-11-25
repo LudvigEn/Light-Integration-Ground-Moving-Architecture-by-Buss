@@ -206,10 +206,6 @@ class Application:
 
         self.previous_tile = current_tile
 
-        if previous_tile == self.settings_screen and current_tile == self.dep_scr:
-            self.refresh_departures()
-            log("on_tile_changed called")
-
     def refresh_departures(self):
         """To update dep"""
 
