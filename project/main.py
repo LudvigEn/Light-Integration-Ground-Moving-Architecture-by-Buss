@@ -514,7 +514,7 @@ class Application:
             None,
         )
 
-         # LOAD BUTTON
+        # LOAD BUTTON
         load_settings_button = lv.button(self.settings_screen)
         load_settings_button.set_pos(300, 200)
         load_settings_button.set_size(200, 50)
