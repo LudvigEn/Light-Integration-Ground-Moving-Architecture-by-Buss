@@ -1,4 +1,4 @@
-"""File for running main-code used in the project"""
+"""File for running main-code used in the project."""
 import sys # Access system utilities, including exception reporting
 if (
     __name__ == "__main__"
@@ -60,56 +60,44 @@ VERSION = 0.5 # Version-control
 
 
 class Application:
-    """Class for application"""
+    """Class for application."""
+
     def __init__(self):
+        """Initialize the application and its settings."""
         print("Starting application")
         self.display, self.touch, self.handler = start_board()
-        ## QR-CODE HANDLER
-        self.image_fs = lv.fs_drv_t()
-        fs_driver.fs_register(self.image_fs, "S")
-        self.qr_image = None
-        ## FONT
-        self.font_16 = lv.binfont_create("S:/fonts/transit_16.bin")
-        self.font_16.fallback = lv.font_montserrat_16
-        self.font_28 = lv.binfont_create("S:/fonts/transit_28.bin")
-        self.font_28.fallback = lv.font_montserrat_28
-        self.icon_font_32 = lv.binfont_create("S:/fonts/transit_icons_32.bin")
-        ## KEYBOARD
-        key_map = list("qwertyuiopå") + ["\n"] + list("asdfghjklöä") + ["\n"] # First two row of letters
-        key_map += list("zxcvbnm-") + [lv.SYMBOL.BACKSPACE, "\n"] # Third row of letters (and symbol)
-        key_map += [lv.SYMBOL.CLOSE, lv.SYMBOL.LEFT, " ", lv.SYMBOL.RIGHT, lv.SYMBOL.OK, ""] # Forth row of symbols
-        controls = [4 if key == " " else 1 for key in key_map if key not in ("", "\n")] # Size of keys (space is larger)
-        self.keyboard_layout = key_map, controls # Save the layout
-        ## LIST OF ELEMENTS
+        self.image_fs = lv.fs_drv_t() # Image-handler
+        fs_driver.fs_register(self.image_fs, "S") # Image-handler
+        self.qr_image = None # QR-code for Trafiklab terms-of-use
+        self.font_16 = lv.binfont_create("S:/fonts/transit_16.bin") # Our custom 16-size font (so åäö works)
+        self.font_16.fallback = lv.font_montserrat_16 # If our custom font doesn't have the character, use this instead
+        self.font_28 = lv.binfont_create("S:/fonts/transit_28.bin") # Our custom 28-size font (so åäö works)
+        self.font_28.fallback = lv.font_montserrat_28 # If our custom font doesn't have the character, use this instead
+        self.icon_font_32 = lv.binfont_create("S:/fonts/transit_icons_32.bin") # This is for the bus, train and ferry icons.
+        self.dark_mode = True # Dark mode toggle, default on
         self.backgrounds = [] # List of all backgrounds, for toggling dark-mode
         self.borders = [] # List of all borders (like around boxes), for toggling dark-mode
         self.labels = [] # List of all labels, for toggling dark-mode
         self.controls = [] # List of all controls (buttons/dropdowns), for toggling dark-mode
-        ## DEFAULT VALUES
-        self.dark_mode = True # Dark mode toggle, default on
-        self.journey_from: str = "Campus Gräsvik"
-        self.journey_to: str = "Landsvägsgatan"
-        self.journeys: list = None
-        self.default_stop = "Campus Gräsvik"
-        self.default_transport_type = "BUS"
-        ## TIMER
-        self.refresh_started: int = -100000
+        self.journey_from: str = "Campus Gräsvik" # Default-value, also the one being passed on to other functions
+        self.journey_to: str = "Landsvägsgatan" # Default-value, also the one being passed on to other functions
+        self.journeys: list = None # List of possible Journeys to reach destination, empty by default
+        self.default_stop = "Campus Gräsvik" # Default-value, also the one being passed on to other functions
+        self.default_transport_type = "BUS" # Default-value, also the one being passed on to other functions
+        self.refresh_started: int = -100000 # Default-value, also serves the countdown to auto-refresh
         self.departure_timer = None
         self.q_time = None
-        ## STOPS
-        module_dir = __file__.replace("\\", "/").rpartition("/")[0] or "."
+        module_dir = __file__.replace("\\", "/").rpartition("/")[0] or "." # Relative file-path to find STOPS.json
         with open(module_dir + "/STOPS.json", "r", encoding="utf-8") as file:
-            self.STOPS = json.load(file)
-        ## WIFI
+            self.STOPS = json.load(file) # File with all stops
         self.wifi_name: str = self.connect_wifi() or "Offline"
         self.create_ui() # Function to trigger creation of UI
         log("student application ready")
 
-
-        """Function: runs the """
-
     def save_settings(self):
-        """Function: Save settings to file."""
+        """Function: Save settings to file.
+        When saving new settings, overwrite the old settings.txt.
+        """
         with open("settings.txt", "w", encoding="utf-8") as file:
             to_write = f"{self.default_stop}\n{self.default_transport_type}\n{self.dark_mode}"
             file.write(to_write)
@@ -117,17 +105,17 @@ class Application:
             log(log_written)
 
     def reset_settings(self):
-        """Function to reset settings by reloading setting screen"""
+        """Function to reset settings by reloading setting screen."""
         log("Reset Settings called")
-        self.read_settings()
-        self.destroy_screen(self.settings_screen)
-        self.create_settings_screen()
-        self.tileview.set_tile(self.settings_screen, False)
-        self.apply_colors()
+        self.read_settings() # Fetch saved settings
+        self.destroy_screen(self.settings_screen) # Destroy and...
+        self.create_settings_screen() # ...rebuild the settings-screen
+        self.tileview.set_tile(self.settings_screen, False) # And move to that screen
+        self.apply_colors() # And apply proper color-scheme
 
     def read_settings(self):
         """If a settings.txt file is present, read the data from it
-        If there are not 3 lines of text in it; revert to defaults
+        If there are not 3 lines of text in it; revert to some defaults.
         """
         self.default_stop = "Campus Gräsvik"
         self.default_transport_type = "BUS"
@@ -143,12 +131,13 @@ class Application:
             log(log_file_error)
             return
 
-        self.default_stop = lines[0]
-        self.default_transport_type = lines[1]
-        self.dark_mode = lines[2] == "True"
+        self.default_stop = lines[0] # The Default-stop is the first line in the settings-file
+        self.default_transport_type = lines[1] # The Default-transport-type is the second line in the settings-file
+        self.dark_mode = lines[2] == "True" # Dark mode is the third line
 
     def open_search(self, dropdown):
-        """Run on Search-button pressed"""
+        """Run on Search-button pressed."""
+        font = self.font_16
         dropdown.close()
         names = dropdown.get_options().splitlines()
         index = dropdown.get_selected()
@@ -164,7 +153,7 @@ class Application:
         panel.set_style_bg_color(lv.color_hex(0x000000), 0)
         panel.set_style_bg_opa(lv.OPA.COVER, 0)
         panel.set_style_text_color(lv.color_hex(0xFFFFFF), 0)
-        panel.set_style_text_font(self.font_16, 0)
+        panel.set_style_text_font(font, 0)
 
         # INPUT-TEXT-FIELD
         field = lv.textarea(panel)
@@ -180,35 +169,38 @@ class Application:
         results = lv.dropdown(panel)
         results.set_pos(20, 80)
         results.set_width(560)
-        results.set_style_text_font(self.font_16, 0)
+        results.set_style_text_font(font, 0)
         results.set_style_bg_color(lv.color_hex(0x000000), 0)
-        results.get_list().set_style_text_font(self.font_16, 0)
-        results.get_list().set_style_max_height(80, 0) # We can't fit more options with the keyboard in the way
+        results.get_list().set_style_text_font(font, 0)
+        results.get_list().set_style_max_height(80, 0)
 
-        # STATUS-LABEL
-        status = lv.label(panel)
-        status.set_pos(20, 130)
-        status.set_width(560)
+        # status = lv.label(panel)
+        # status.set_pos(20, 130)
+        # status.set_width(560)
 
-        keys = lv.keyboard(panel) # Create a keyboard
-        keys.set_size(600, 240) # Set size
-        keys.align(lv.ALIGN.BOTTOM_MID, 0 ,0) # Anchor to bottom mid
-        keys.set_style_text_font(self.font_16, lv.PART.ITEMS) # Font of keys on keyboard, lv.PART.ITEMS targets the keys (not the keyboard itself)
-        keys.set_style_bg_color(lv.color_hex(0x000000), 0) # Black background
-        key_map, controls = self.keyboard_layout # Fetch our keyboard layout
-        keys.set_map(lv.keyboard.MODE.USER_1, key_map, controls) # Apply our keyboard-layout
-        keys.set_mode(lv.keyboard.MODE.USER_1) # Display our custom layout
-        keys.set_textarea(field) # Output for keyboard
+        # Create a custom keyboard with support for Swedish characters
+        keys = lv.keyboard(panel)
+        keys.set_pos(0, 210)
+        keys.set_size(600, 240)
+        keys.set_style_text_font(font, lv.PART.ITEMS)
+        keys.set_style_bg_color(lv.color_hex(0x000000), 0)
+        key_map = list("qwertyuiopå") + ["\n"] + list("asdfghjklöä") + ["\n"]
+        key_map += list("zxcvbnm-") + [lv.SYMBOL.BACKSPACE, "\n"]
+        key_map += [lv.SYMBOL.CLOSE, lv.SYMBOL.LEFT, " ", lv.SYMBOL.RIGHT, lv.SYMBOL.OK, ""]
+        controls = [4 if key == " " else 1 for key in key_map if key not in ("", "\n")]
+        keys.set_map(lv.keyboard.MODE.USER_1, key_map, controls)
+        keys.set_mode(lv.keyboard.MODE.USER_1)
+        keys.set_textarea(field)
 
         def normalize(text):
-            """Replaces text with lower-cases, to avoid case-matching"""
+            """Replaces text with lower-cases, to avoid case-matching."""
             return (
                 text.replace("Å", "å")
                 .replace("Ä", "ä")
                 .replace("Ö", "ö")
                 .lower()
             )
-
+        # Filter available stops based on the user's search input
         def filter_names(_event=None):
             query = normalize(field.get_text().strip())
             matches = [
@@ -222,50 +214,39 @@ class Application:
                 results.set_selected(
                     matches.index(selected) if selected in matches else 0
                 )
-                status.set_text(f"{len(matches)} matching stops") # Number of matching stops as status
+                # status.set_text(f"{len(matches)} matching stops")
             else:
-                results.add_state(lv.STATE.DISABLED) # Disables scrolling an empty dropdown.
-                status.set_text("No matching stops") # Update Status text to visualize issue
-
-        self.search_keyboard_buffers = (key_map, controls) # Keeps
+                results.add_state(lv.STATE.DISABLED)
+                # status.set_text("No matching stops")
         field.add_event_cb(
-            filter_names, # Update the filtered dropdown...
-            lv.EVENT.VALUE_CHANGED, # ... when the field is modified.
-            None,
+            filter_names,
+            lv.EVENT.VALUE_CHANGED,
+            (key_map, controls),
         )
 
         filter_names()
 
+        # Transfer the selected search result to the original dropdown
         def close_search(_event):
-            filtered_names = results.get_options().splitlines() # Get the filtered options
-            index = results.get_selected() # And the index of the selected one
+            filtered_names = results.get_options().splitlines()
+            index = results.get_selected()
 
-            if not 0 <= index < len(filtered_names): # If index fails (outside of selectable options)
-                return # Return nothing
-            chosen = filtered_names[index] # This is the stop chosen
-            dropdown.set_selected(names.index(chosen)) # Set the original dropdown to that chosen stop
-            dropdown.send_event(lv.EVENT.VALUE_CHANGED, None) # And trigger an VALUE_CHANGED event for that dropdown.
-            keys.set_textarea(None)
-            panel.delete()
-
-        def cancel_search(_event):
+            if not 0 <= index < len(filtered_names):
+                return
+            chosen = filtered_names[index]
+            dropdown.set_selected(names.index(chosen))
+            dropdown.send_event(lv.EVENT.VALUE_CHANGED, None)
             keys.set_textarea(None)
             panel.delete()
 
         field.add_event_cb(
-            cancel_search, # Run the function cancel_search...
-            lv.EVENT.CANCEL, # ...when field is declined.
-            None
-        )
-
-        field.add_event_cb(
-            close_search, # Run the function close_search...
-            lv.EVENT.READY, # ...when field is submitted.
+            close_search,
+            lv.EVENT.READY,
             None
         )
 
     def apply_colors(self, screen="All"):
-        """Function: Applies black/white to all elements depending on if Dark Mode is enabled or not"""
+        """Function: Applies black/white to all elements depending on if Dark Mode is enabled or not."""
         background_color = lv.color_hex(0x000000 if self.dark_mode else 0xFFFFFF) # Background color, if Dark-mode: black, else white
         foreground_color = lv.color_hex(0xFFFFFF if self.dark_mode else 0x000000) # Foreground (topmost layer) color, if Dark-mode: white, else black
 
@@ -310,8 +291,8 @@ class Application:
         self.apply_colors() ## Apply colors to Backgrounds, Borders and Labels
 
     def create_title_screen(self):
-        """Function: Startup-screen"""
-        self.title_screen = self.tileview.add_tile(2, 0, lv.DIR.RIGHT | lv.DIR.LEFT) # Create a screen on our tileview
+        """Function: Startup-screen."""
+        self.title_screen = self.tileview.add_tile(2, 0, lv.DIR.RIGHT) # Create a screen on our tileview
 
         # Create labels for title-screen
         self.title_screen_label = lv.label(self.title_screen) # Add a label to the Title screen
@@ -342,11 +323,8 @@ class Application:
 
     def destroy_screen(self, screen):
         """Clears existing departure data to be replaced with new data."""
-        # Since we have lists of all elements saved, to be recolored on dark-mode switch.
-        # We also need to remove those elements from those lists.
-        # We therefore need to loop through all elements and remove those from the lists
-        # (or rather re-save those that should still remain)
-        def belongs_to_screen(widget):
+        def belongs_to_departures(widget):
+
             parent = widget.get_parent()
             while parent is not None:
                 if parent == screen:
@@ -362,7 +340,7 @@ class Application:
         screen.clean()
 
     def on_tile_changed(self, _event):
-        """Runs whenever a tile is changed"""
+        """Runs whenever a tile is changed."""
         if _event.get_target_obj() != self.tileview: # Ensures that we only look at changes to tiles
             return
 
@@ -371,28 +349,35 @@ class Application:
 
         self.previous_tile = current_tile
 
+        # Stop automatic departure updates when leaving the departure screen
         if previous_tile == self.dep_scr and current_tile != self.dep_scr:
             self.stop_departure_timer()
 
+        # Refresh departures when navigating from settings to the departures screen
         if previous_tile == self.settings_screen and current_tile == self.dep_scr:
             log("Swap to Departure-screen")
             self.refresh_departures()
 
+        # Fetch and display journeys when entering the journey screen from journey selection
         if previous_tile == self.journey_selection_screen and current_tile == self.journey_screen:
             log("Swap to Journey-screen")
             self.journeys, _ = find_journey(self.journey_from, self.journey_to) # Fetch data on Journeys between from and to.
             self.refresh_journeys(self.journeys)
 
     def refresh_journeys(self, journeys):
-        """To update Journeys"""
+        """Update the journey screen with the available jopurneys."""
+
+        # Remove previously displyed journeys before displaying new ones
         self.destroy_screen(self.journey_screen)
 
+        # Create a header displaying the departure and destination stops
         self.journey_screen_header_label = lv.label(self.journey_screen)
         self.journey_screen_header_label.set_style_text_font(self.font_28, 0)
         self.journey_screen_header_label.set_text(f"{self.journey_from} -> {self.journey_to}")
         self.journey_screen_header_label.set_pos(10, 0)
         self.labels.append(self.journey_screen_header_label)
 
+        # Create a label for each journey
         y = 40
         for journey in journeys:
             journey_label = lv.label(self.journey_screen)
@@ -401,15 +386,17 @@ class Application:
             journey_label.set_text(str(journey).replace("\t", "    "))
             journey_label.set_pos(10, y)
             journey_label.update_layout()
+
+            # Position the next journey below the current one to avoid overlapping
             y += journey_label.get_height() + 16
             self.labels.append(journey_label)
+
+        # Apply the current color theme to journey screen
         self.apply_colors(self.journey_screen)
 
     def refresh_departures(self):
-        """To update dep"""
-        self.stop_departure_timer()
-        self.q_time = None
-        self.destroy_screen(self.dep_scr) # Out with the old and in with the new
+        """To update departures."""
+        self.clear_departures()
 
         transport_types = sorted(self.STOPS)
         transport_type = transport_types[
@@ -456,7 +443,7 @@ class Application:
             and self.q_time is not None
         ):
             def update_q_time(_timer=None):
-                """Update the departure countdown"""
+                """Update the departure countdown."""
                 if self.q_time is None:
                     return
 
@@ -464,12 +451,14 @@ class Application:
                     time.ticks_ms(), # pylint: disable=no-member
                     self.refresh_started,
                 )
+                # Calculate the remaining seconds until the next automatic refresh
                 remaining_s = (max(0, 60_000 - elapsed_ms) + 999) // 1000
                 if remaining_s <= 0 and self.tileview.get_tile_active() == self.dep_scr:
                     self.refresh_departures()
                     return
                 self.q_time.set_text(str(remaining_s))
             update_q_time()
+            # Update the countdown every second
             self.departure_timer = lv.timer_create(
                 update_q_time,
                 1000,
@@ -485,7 +474,6 @@ class Application:
 
     def create_departure_screen(self, stop):
         """Function: Show departures on a specific stop."""
-
         ## Name of bus-stop
         header = lv.label(self.dep_scr) # Add a label to the Departure screen
         header.set_text(stop.name) # Name of stop as header
@@ -514,7 +502,7 @@ class Application:
             departure for departure in stop.departures
             if (self.default_transport_type == "ALL" or departure.route.transport_type == self.default_transport_type)
         ]
-        ## For each departure, we will have a row with 3 columns; Route, Direction and Time
+        ## For each departure, we will have a row with 4 columns; Route, Direction, ETA and Delay
         for departure in filtered_departures:
             dep_timestamp = departure.realtime or departure.scheduled # Realtime if realtime exists, else scheduled
             eta = dep_timestamp[11:19] # As it's a timestamp, we only want the HH:MM:SS part, i.e. excluding the date.
@@ -595,8 +583,8 @@ class Application:
         self.refresh_started = time.ticks_ms()
 
     def create_settings_screen(self):
-        """Function: Create a settings screen"""
-
+        """Function: Create a settings screen."""
+        self.settings_screen = self.tileview.add_tile(3, 0, lv.DIR.LEFT | lv.DIR.RIGHT) # Create a screen on our tileview
 
         # SETTINGS HEADER
         settings_header = lv.label(self.settings_screen)
@@ -649,8 +637,9 @@ class Application:
         self.default_transport_type = transport_types[selected_transport_type]
         self.transport_type_dropdown = transport_type_dropdown
         self.controls.append(transport_type_dropdown)
+
         def on_transport_type_changed(_event):
-            """What to do when a different value is selected"""
+            """What to do when a different value is selected."""
             names = transport_type_dropdown.get_options().splitlines()
             index = transport_type_dropdown.get_selected()
             if 0 <= index < len(names):
@@ -687,8 +676,9 @@ class Application:
         self.default_stop = stop_names[selected_stop]
         self.stop_dropdown = stop_dropdown
         self.controls.append(stop_dropdown)
+
         def on_stop_changed(_event):
-            """What to do when a different value is selected"""
+            """What to do when a different value is selected."""
             names = stop_dropdown.get_options().splitlines()
             index = stop_dropdown.get_selected()
             if 0 <= index < len(names):
@@ -771,7 +761,7 @@ class Application:
         log("settings-screen updated")
 
     def create_qr_legal_screen(self):
-        """Shows a QR-code for the legal-text related to Trfa"""
+        """Shows a QR-code for the legal-text related to Trfa."""
         self.qr_scr = self.tileview.add_tile(3, 1, lv.DIR.NONE)
         self.backgrounds.append(self.qr_scr)
 
@@ -792,7 +782,7 @@ class Application:
         self.qr_image.center()
 
     def create_journey_selection_screen(self):
-        """Function: Create a journey selection screen"""
+        """Function: Create a journey selection screen."""
         self.journey_selection_screen = self.tileview.add_tile(1, 0, lv.DIR.LEFT | lv.DIR.RIGHT)
 
         # JOURNEY HEADER-LABEL
@@ -827,6 +817,7 @@ class Application:
         from_dropdown.set_selected(selected_from) # Set default stop as selected
         self.journey_from = from_names[selected_from] # Update the defaultly seleceted stop as journey_from
         self.controls.append(from_dropdown) # Add to list of controls to be recolored
+
         def on_from_changed(_event): # Update journey_from when dropdown changes
             """What to do when a different value is selected"""
             names = from_dropdown.get_options().splitlines()
@@ -879,8 +870,9 @@ class Application:
         to_dropdown.set_selected(selected_to)
         self.journey_to = to_names[selected_to]
         self.controls.append(to_dropdown)
+
         def on_to_changed(_event): # Update journey_to when dropdown changes
-            """What to do when a different value is selected"""
+            """What to do when a different value is selected."""
             names = to_dropdown.get_options().splitlines()
             index = to_dropdown.get_selected()
             if 0 <= index < len(names):
@@ -911,18 +903,19 @@ class Application:
         log("journey-screen created")
 
     def create_journey_screen(self):
-        """Creates the screen for displaying the journeys"""
-        self.journey_screen = self.tileview.add_tile(0, 0, lv.DIR.RIGHT)
-
+        """Creates a journey screen."""
+        self.journey_screen = self.tileview.add_tile(0, 0, lv.DIR.RIGHT) 
         self.journey_screen_label = lv.label(self.journey_screen)
-        self.journey_screen_label.set_style_text_font(self.font_28, 0)
         self.journey_screen_label.set_text("Reseskärm")
         self.journey_screen_label.align(lv.ALIGN.CENTER, 0, -180)
         self.backgrounds.append(self.journey_screen)
         self.labels.append(self.journey_screen_label)
 
+        #self.labels.append(self.journey_screen_label)
+
     def create_ui(self):
-        'Function: Creates UI'
+        """Function: Creates UI."""
+        #api_data = read_data(False) ## IF TRUE, ONLY USE TEST-DATA INSTEAD (i.e. don't use ACTUAL data)
         self.tileview = lv.tileview(lv.screen_active()) ## Creates frame to add tiles to
         self.tileview.set_size(600, 450) ## That is the size 600 in x and 450 in y
         self.tileview.set_scrollbar_mode(lv.SCROLLBAR_MODE.OFF) ## Scrollbar is that thing on your right that you can grab and scroll.
@@ -953,12 +946,25 @@ class Application:
 
     @staticmethod
     def connect_wifi():
-        'Function: Connects to WiFi'
+        """Function: Connects to WiFi."""
+        # log("connecting to Wi-Fi SSID: " + WIFI_SSID)
+        # station = network.WLAN(network.STA_IF)
+        # station.active(True)
+        # station.connect(WIFI_SSID, WIFI_PASSWORD)
+        # started = time.ticks_ms() # pylint: disable=no-member
+        # while (not station.isconnected() and
+        #        time.ticks_diff(time.ticks_ms(), started) < 15_000): # pylint: disable=no-member
+        #     time.sleep_ms(250) # pylint: disable=no-member
+        # log("Wi-Fi connected" if station.isconnected()
+        #     else "Wi-Fi could not connect (timeout)")
+
+        # Use the configured network list or fall back to the default Wi-Fi credentials
         networks = WIFI_LIST or [(WIFI_SSID, WIFI_PASSWORD)]
 
         station = network.WLAN(network.STA_IF)
         station.active(True)
 
+        # Attempt to connect to each donfigured Wi-Fi network
         for ssid, password in networks:
             log(f"Connection to Wi-Fi SSID: {ssid}")
 
@@ -967,6 +973,7 @@ class Application:
                 station.connect(ssid, password)
                 started = time.ticks_ms()
 
+                # Wait up to 15 seconds for the connection to succeed
                 while (
                     not station.isconnected()
                     and time.ticks_diff(time.ticks_ms(), started) < 15_000
